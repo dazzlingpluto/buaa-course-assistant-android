@@ -1,0 +1,83 @@
+# Local Android build entry points
+/build_android.ps1
+/build_android.py
+/scripts/load_signing.ps1
+/scripts/prepare_update.ps1
+/tests/__init__.py
+/tests/test_captcha_icu_compat.py
+
+# Build outputs, downloaded SDK/JDK/Gradle tools, and caches
+build/
+dist/
+out/
+.gradle/
+.kotlin/
+.cxx/
+.externalNativeBuild/
+*.exe
+*.apk
+*.aab
+*.apks
+*.bin
+*.spec
+
+# Python environments and caches
+.venv/
+.venv-*/
+venv/
+env/
+.tox/
+.nox/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE and machine-local configuration
+.idea/
+.vscode/
+.codex/
+*.iml
+local.properties
+key.properties
+keystore.properties
+secrets.properties
+.env
+.env.*
+
+# Signing keys, private certificates, and credentials (back up locally)
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.key
+*.pem
+id_rsa
+id_ed25519
+id_ecdsa
+credentials.json
+service-account*.json
+secrets.json
+.secrets/
+secrets/
+*.dpapi
+签名密码备份.txt
+
+# Logs, crash dumps, and OS-generated files
+logs/
+*.log
+*.log.*
+*.hprof
+hs_err_pid*
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# User-provided reference projects; not part of this app
+others/
+
+# Retired Sites deployment checkout
+/sites/buaa-course-assistant/

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1254"
+    android:viewportHeight="1254">
+    <!-- Leave room for circular and rounded launcher masks. -->
+    <group android:pivotX="627" android:pivotY="627"
+        android:scaleX="0.82" android:scaleY="0.82">
+        <!-- Calendar frame and binding tabs. -->
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M410,350 H408 C329,350 264,415 264,494 V855 C264,926 322,984 393,984 H759 C830,984 888,926 888,855 V683 Q888,677 882,683 L838,719 V854 C838,893 807,924 768,924 H384 C346,924 315,893 315,855 V563 C315,535 338,513 366,513 H682 L703,493 Q718,478 743,474 L875,452 Q883,450 879,437 C866,386 820,350 761,350 V399 C761,432 735,459 702,459 C669,459 643,432 643,399 V350 H528 V399 C528,432 502,459 469,459 C437,459 411,432 411,399 Z
+                M434,304 A36,36 0,0 1,506 304 V399 A36,36 0,0 1,434 399 Z
+                M665,304 A36,36 0,0 1,737 304 V399 A36,36 0,0 1,665 399 Z" />
+        <!-- Timetable entries. -->
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M396,578 H586 A27,27 0,0 1,613 605 V676 A27,27 0,0 1,586 703 H396 A27,27 0,0 1,369 676 V605 A27,27 0,0 1,396 578 Z
+                M396,742 H586 A27,27 0,0 1,613 769 V842 A27,27 0,0 1,586 869 H396 A27,27 0,0 1,369 842 V769 A27,27 0,0 1,396 742 Z" />
+        <!-- Aircraft. -->
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M700,527 L718,508 Q722,504 729,503 L889,475 L938,425 C955,407 987,395 1000,405 C1013,415 1002,448 985,468 L937,521 L934,671 Q934,683 923,690 Q918,694 915,688 L868,593 L799,654 L806,703 Q807,707 803,711 L783,731 Q780,735 777,729 L747,669 L679,641 Q674,639 679,634 L697,616 Q702,610 709,611 L766,616 L820,551 L704,532 Q698,531 700,527 Z" />
+        <!-- Attendance check. -->
+        <path android:strokeColor="#FFFFFF" android:strokeWidth="34"
+            android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M673,816 L705,850 L782,772" />
+    </group>
+</vector>

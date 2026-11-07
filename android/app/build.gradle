@@ -1,0 +1,77 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.plugin.compose'
+}
+
+def updateRepository = providers.environmentVariable('BUAA_UPDATE_REPOSITORY')
+    .orElse('dazzlingpluto/buaa-course-assistant-android').get()
+if (!(updateRepository ==~ /[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+/) ||
+    updateRepository.endsWith('/.') || updateRepository.endsWith('/..')) {
+    throw new GradleException('BUAA_UPDATE_REPOSITORY must be a GitHub owner/repository pair.')
+}
+
+android {
+    namespace 'org.buaacourse.assistant'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'org.buaacourse.assistant'
+        minSdk 24
+        targetSdk 36
+        versionCode 24020
+        versionName '2.3.1'
+        buildConfigField 'String', 'UPDATE_REPOSITORY', groovy.json.JsonOutput.toJson(updateRepository)
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
+    }
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+    signingConfigs {
+        debug {
+            storeFile rootProject.file('../build/android-signing/debug.keystore')
+            storePassword System.getenv('BUAA_SIGNING_STORE_PASSWORD') ?: 'android'
+            keyPassword System.getenv('BUAA_SIGNING_KEY_PASSWORD') ?: 'android'
+            keyAlias 'androiddebugkey'
+        }
+    }
+    testOptions {
+        unitTests.includeAndroidResources = true
+        unitTests.all {
+            maxHeapSize = '2g'
+            jvmArgs '--add-opens=java.base/java.lang=ALL-UNNAMED', '--add-opens=java.base/java.util=ALL-UNNAMED'
+            systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
+        }
+    }
+    packaging { resources { excludes += ['META-INF/AL2.0', 'META-INF/LGPL2.1'] } }
+}
+
+dependencies {
+    implementation platform('androidx.compose:compose-bom:2025.08.01')
+    implementation 'androidx.activity:activity-compose:1.10.1'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.9.2'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.9.2'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    debugImplementation 'androidx.compose.ui:ui-tooling'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'org.jsoup:jsoup:1.18.3'
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2'
+    testImplementation 'org.json:json:20240303'
+    testImplementation 'org.robolectric:robolectric:4.17'
+    testImplementation platform('androidx.compose:compose-bom:2025.08.01')
+    testImplementation 'androidx.compose.ui:ui-test-junit4'
+    androidTestImplementation platform('androidx.compose:compose-bom:2025.08.01')
+    androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    debugImplementation 'androidx.compose.ui:ui-test-manifest'
+}

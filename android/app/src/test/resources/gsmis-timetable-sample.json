@@ -1,0 +1,35 @@
+{
+  "code": 1,
+  "rwList": [
+    {
+      "BJDM": "sample-class",
+      "XNXQDM": "20261",
+      "SCSKRQ": "2026-09-14"
+    }
+  ],
+  "jgList": [
+    {
+      "BJDM": "sample-class",
+      "KCDM": "sample-course",
+      "KCMC": "示例课程",
+      "XQ": 1,
+      "KSJCDM": 1,
+      "JSJCDM": 2,
+      "ZCBH": "0101",
+      "JCFADM": "01",
+      "JGJSXM": "示例教师甲，示例教师乙",
+      "JASMC": "星桥楼 6-107"
+    }
+  ],
+  "jcfaList": [
+    {
+      "skjcList": [
+        { "JCFADM": "01", "DM": "1", "KSSJ": 800, "JSSJ": 845 },
+        { "JCFADM": "01", "DM": "2", "KSSJ": 850, "JSSJ": 935 },
+        { "JCFADM": "01", "DM": "3", "KSSJ": 950, "JSSJ": 1035 },
+        { "JCFADM": "01", "DM": "4", "KSSJ": 1040, "JSSJ": 1125 },
+        { "JCFADM": "01", "DM": "5", "KSSJ": 1130, "JSSJ": 1215 }
+      ]
+    }
+  ]
+}
