@@ -4,11 +4,11 @@
 
 ## 安装与更新
 
-1. 在 Android 7.0 或更高版本的手机上，登录有仓库访问权限的 GitHub 账号，打开 [v2.3.1 发布页](https://github.com/dazzlingpluto/buaa-course-assistant-android/releases/tag/v2.3.1)。
+1. 在 Android 7.0 或更高版本的手机上，打开 [v2.3.1 发布页](https://github.com/dazzlingpluto/buaa-course-assistant-android/releases/tag/v2.3.1)。
 2. 在发布页的 **Assets** 中下载 `buaa-course-assistant-v2.3.1.apk`。下载完成后打开 APK，按系统提示安装。若系统提示需要授权，允许当前浏览器或文件管理器安装应用后再继续。
 3. 安装后打开「北航课程助手」。已有版本使用相同签名时，可以直接覆盖安装并保留应用数据。
 
-当前 GitHub 仓库为私有，应用内「更新」无法读取发布附件。请登录 GitHub，在 [Releases](https://github.com/dazzlingpluto/buaa-course-assistant-android/releases/latest) 手动下载新版 APK。
+以后可在登录页或课表页点击「更新」检查新版，也可从 [Releases](https://github.com/dazzlingpluto/buaa-course-assistant-android/releases/latest) 直接下载 APK。
 
 ## 使用
 
