@@ -8,7 +8,7 @@
 2. 在发布页的 **Assets** 中下载 `buaa-course-assistant-v2.3.1.apk`。下载完成后打开 APK，按系统提示安装。若系统提示需要授权，允许当前浏览器或文件管理器安装应用后再继续。
 3. 安装后打开「北航课程助手」。已有版本使用相同签名时，可以直接覆盖安装并保留应用数据。
 
-以后可在登录页或课表页点击「更新」手动检查新版，也可从 [Releases](https://github.com/dazzlingpluto/buaa-course-assistant-android/releases/latest) 直接下载 APK。
+更新应用时，从 [GitHub Releases](https://github.com/dazzlingpluto/buaa-course-assistant-android/releases/latest) 下载 APK 并覆盖安装。
 
 ## 使用
 

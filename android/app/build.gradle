@@ -3,13 +3,6 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
-def updateRepository = providers.environmentVariable('BUAA_UPDATE_REPOSITORY')
-    .orElse('dazzlingpluto/buaa-course-assistant-android').get()
-if (!(updateRepository ==~ /[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+/) ||
-    updateRepository.endsWith('/.') || updateRepository.endsWith('/..')) {
-    throw new GradleException('BUAA_UPDATE_REPOSITORY must be a GitHub owner/repository pair.')
-}
-
 android {
     namespace 'org.buaacourse.assistant'
     compileSdk 36
@@ -19,7 +12,6 @@ android {
         targetSdk 36
         versionCode 24020
         versionName '2.3.1'
-        buildConfigField 'String', 'UPDATE_REPOSITORY', groovy.json.JsonOutput.toJson(updateRepository)
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
     compileOptions {
@@ -29,7 +21,6 @@ android {
     }
     buildFeatures {
         compose true
-        buildConfig true
     }
     signingConfigs {
         debug {

@@ -77,11 +77,10 @@ data class AssistantActions(
     val sign: (Course) -> Unit = {},
     val dismissMessage: () -> Unit = {},
     val dismissError: () -> Unit = {},
-    val openUpdates: (() -> Unit)? = null,
 )
 
 @Composable
-internal fun AssistantScreen(viewModel: AssistantViewModel, updates: AppUpdateViewModel) {
+internal fun AssistantScreen(viewModel: AssistantViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     AssistantContent(
         state,
@@ -104,10 +103,8 @@ internal fun AssistantScreen(viewModel: AssistantViewModel, updates: AppUpdateVi
             sign = viewModel::signCourse,
             dismissMessage = viewModel::dismissMessage,
             dismissError = viewModel::dismissError,
-            openUpdates = updates::open,
         ),
     )
-    AssistantTheme { AppUpdateDialog(updates, UiWords(state.language)) }
 }
 
 @Composable
@@ -355,9 +352,6 @@ private fun CampusHeader(state: AssistantUiState, actions: AssistantActions, wor
                 }
                 if (loggedIn) {
                     HeaderButton(words.text("退出登录", "Sign out"), !state.busy, actions.logout, "logout")
-                }
-                actions.openUpdates?.let {
-                    HeaderButton(words.text("更新", "Updates"), true, it, "app_updates")
                 }
                 HeaderButton(words.text("EN", "中"), !state.busy, actions.language, "language")
             }

@@ -11,7 +11,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val model = ViewModelProvider(this)[AssistantViewModel::class.java]
-        val updates = ViewModelProvider(this)[AppUpdateViewModel::class.java]
-        setContent { AssistantScreen(model, updates) }
+        setContent { AssistantScreen(model) }
     }
 }

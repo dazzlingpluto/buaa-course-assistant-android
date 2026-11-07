@@ -2,7 +2,6 @@
 /build_android.ps1
 /build_android.py
 /scripts/load_signing.ps1
-/scripts/prepare_update.ps1
 /tests/__init__.py
 /tests/test_captcha_icu_compat.py
 

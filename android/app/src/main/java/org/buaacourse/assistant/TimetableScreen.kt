@@ -167,11 +167,6 @@ private fun TimetableHeader(state: AssistantUiState, actions: AssistantActions, 
                     Text(words.studentLabel(resolvedStudentType(state)) + words.text(" · 点击课程查看详情", " · Tap a class for details"),
                         modifier = Modifier.testTag("timetable_identity"), fontSize = 11.sp, color = SoftInk)
                 }
-                actions.openUpdates?.let {
-                    TextButton(onClick = it, modifier = Modifier.testTag("app_updates"), contentPadding = PaddingValues(6.dp)) {
-                        Text(words.text("更新", "Updates"), fontSize = 12.sp)
-                    }
-                }
                 TextButton(onClick = actions.language, enabled = !state.busy, modifier = Modifier.testTag("language"), contentPadding = PaddingValues(8.dp)) { Text(words.text("EN", "中")) }
                 TextButton(onClick = actions.logout, enabled = !state.busy, modifier = Modifier.testTag("logout"), contentPadding = PaddingValues(6.dp)) { Text(words.text("退出", "Sign out"), fontSize = 12.sp) }
             }
