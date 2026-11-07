@@ -1,8 +1,6 @@
 package org.buaacourse.assistant
 
 import android.app.Application
-import android.content.Context
-import androidx.core.content.edit
 import androidx.core.content.pm.PackageInfoCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -27,40 +25,21 @@ internal data class AppUpdateState(
 }
 
 internal class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
-    private val prefs = app.getSharedPreferences("app_updates", Context.MODE_PRIVATE)
     private val client = AppUpdateClient()
-    private val repository = BuildConfig.UPDATE_REPOSITORY
-    private val source = githubManifestUrl(repository)
-    private val lastCheck = "last_github_check:$repository"
+    private val source = githubManifestUrl(BuildConfig.UPDATE_REPOSITORY)
     private val _state = MutableStateFlow(AppUpdateState())
     val state = _state.asStateFlow()
     private val installed = app.packageManager.getPackageInfo(app.packageName, 0)
     private val versionCode = PackageInfoCompat.getLongVersionCode(installed)
     val versionName = installed.versionName.orEmpty()
 
-    init {
-        if (prefs.contains("source")) prefs.edit {
-            remove("source")
-            remove("last_check")
-        }
-    }
-
     fun open() { _state.update { it.copy(visible = true) } }
 
     fun close() { _state.update { it.copy(visible = false) } }
 
-    fun checkOnResume() {
-        if (_state.value.busy) return
-        val elapsed = System.currentTimeMillis() - prefs.getLong(lastCheck, 0L)
-        if (elapsed !in 0 until 24 * 60 * 60 * 1000L) check(manual = false)
-    }
-
-    fun checkManually() = check(manual = true)
-
-    private fun check(manual: Boolean) {
+    fun checkManually() {
         val current = _state.value
         if (current.busy) return
-        prefs.edit { putLong(lastCheck, System.currentTimeMillis()) }
         _state.value = AppUpdateState(visible = current.visible, status = UpdateStatus.CHECKING)
         viewModelScope.launch {
             try {
@@ -68,11 +47,9 @@ internal class AppUpdateViewModel(private val app: Application) : AndroidViewMod
                 _state.update { state ->
                     state.copy(
                         status = if (release == null) UpdateStatus.CURRENT else UpdateStatus.AVAILABLE,
-                        visible = state.visible || (!manual && release != null),
                         release = release,
                     )
                 }
-                if (!manual && release != null) download()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

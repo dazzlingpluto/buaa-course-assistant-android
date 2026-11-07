@@ -23,14 +23,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
 internal fun AppUpdateDialog(updates: AppUpdateViewModel, words: UiWords) {
     val state by updates.state.collectAsStateWithLifecycle()
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { updates.checkOnResume() }
     if (!state.visible) return
 
     val context = LocalContext.current
