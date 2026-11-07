@@ -1,6 +1,9 @@
 package org.buaacourse.assistant
 
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import org.junit.Assert.assertEquals
@@ -20,6 +23,25 @@ import java.time.LocalTime
 @LooperMode(LooperMode.Mode.PAUSED)
 class AssistantScreenTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun loginFooterOpensThePublicSourceRepository() {
+        val opened = mutableListOf<String>()
+        val uriHandler = object : UriHandler {
+            override fun openUri(uri: String) {
+                opened.add(uri)
+            }
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalUriHandler provides uriHandler) {
+                AssistantContent(AssistantUiState(busy = false))
+            }
+        }
+        compose.onNodeWithTag("assistant_scroll").performScrollToNode(hasTestTag("source_project_link"))
+        compose.onNodeWithTag("source_project_link").assertIsDisplayed().performClick()
+        compose.runOnIdle {
+            assertEquals(listOf("https://github.com/dazzlingpluto/buaa-course-assistant-android"), opened)
+        }
+    }
 
     @Test fun captchaInputImageRefreshAndLoginGatingAreAvailable() {
         val state = mutableStateOf(AssistantUiState(busy = false, username = "demo-user", password = "demo-password",

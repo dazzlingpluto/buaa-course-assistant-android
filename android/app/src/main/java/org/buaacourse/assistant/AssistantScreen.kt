@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -38,10 +39,12 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -52,6 +55,7 @@ internal val DeepBlue = Color(0xFF205D98)
 internal val Paper = Color(0xFFF5F9FC)
 internal val Line = Color(0xFFCCDFEF)
 internal val Tint = Color(0xFFEAF5FF)
+private const val SOURCE_PROJECT_URL = "https://github.com/dazzlingpluto/buaa-course-assistant-android"
 
 /** Callbacks keep rendering testable without a live school account or Android Keystore. */
 data class AssistantActions(
@@ -159,7 +163,7 @@ fun AssistantContent(state: AssistantUiState, actions: AssistantActions = Assist
                     item(key = "login") { LoginPanel(state, actions, words, Modifier.pageWidth().padding(top = 2.dp)) }
                     item(key = "welcome") {
                         Text(words.text("登录后查看你的课程", "Sign in to view your courses"),
-                            modifier = Modifier.padding(24.dp), color = SoftInk, style = MaterialTheme.typography.bodySmall)
+                            modifier = Modifier.padding(top = 20.dp), color = SoftInk, style = MaterialTheme.typography.bodySmall)
                     }
                     if (state.busy) {
                         item(key = "progress") {
@@ -178,6 +182,28 @@ fun AssistantContent(state: AssistantUiState, actions: AssistantActions = Assist
                                     Text(error, color = MaterialTheme.colorScheme.onErrorContainer)
                                     TextButton(onClick = actions.dismissError, modifier = Modifier.align(Alignment.End)) { Text(words.text("关闭", "Dismiss")) }
                                 }
+                            }
+                        }
+                    }
+                    item(key = "source_project") {
+                        val uriHandler = LocalUriHandler.current
+                        val scope = rememberCoroutineScope()
+                        TextButton(
+                            onClick = {
+                                try {
+                                    uriHandler.openUri(SOURCE_PROJECT_URL)
+                                } catch (_: IllegalArgumentException) {
+                                    scope.launch {
+                                        snackbar.showSnackbar(words.text("无法打开项目链接", "Could not open the project link"))
+                                    }
+                                }
+                            },
+                            modifier = Modifier.pageWidth().testTag("source_project_link"),
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(words.text("开源项目 · GitHub", "Open source project · GitHub"))
+                                Text(SOURCE_PROJECT_URL.removePrefix("https://"),
+                                    style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
                             }
                         }
                     }

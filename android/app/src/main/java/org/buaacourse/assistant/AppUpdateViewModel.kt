@@ -72,6 +72,7 @@ internal class AppUpdateViewModel(private val app: Application) : AndroidViewMod
                         release = release,
                     )
                 }
+                if (!manual && release != null) download()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
