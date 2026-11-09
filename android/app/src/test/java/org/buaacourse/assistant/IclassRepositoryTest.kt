@@ -17,13 +17,19 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.*
 import org.junit.Test
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class IclassRepositoryTest {
-    private class Fixture(val custom: (Request) -> Response? = { null }) {
+    private class Fixture(
+        schoolClock: Clock = Clock.system(ZoneId.of("Asia/Shanghai")),
+        val custom: (Request) -> Response? = { null },
+    ) {
         val requests = Collections.synchronizedList(mutableListOf<Request>())
         val logs = Collections.synchronizedList(mutableListOf<String>())
         val client = OkHttpClient.Builder().addInterceptor(Interceptor { chain ->
@@ -47,7 +53,7 @@ class IclassRepositoryTest {
                 else -> error("Unexpected offline request path: ${request.url.encodedPath}")
             }
         }).build()
-        val repo = IclassRepository(logger = { message, _ -> logs += message }, baseClient = client)
+        val repo = IclassRepository(logger = { message, _ -> logs += message }, baseClient = client, schoolClock = schoolClock)
     }
 
     @Test fun completeLoginUsesHiddenStateAndTemporaryLoginNameWithoutLoggingSecrets() = runBlocking {
@@ -203,6 +209,64 @@ class IclassRepositoryTest {
         fixture.repo.logout()
     }
 
+    @Test fun directAttendanceUsesShanghaiWeekAndSignsOnlyPendingIclassIdsWithoutAcademicRequests() = runBlocking {
+        val fixture = Fixture(novemberSchoolClock) { request ->
+            if (!request.url.encodedPath.endsWith("get_stu_course_sched.action")) null else when (request.url.queryParameter("dateStr")) {
+                "20261109" -> reply(request, """{"STATUS":0,"result":[
+                    {"id":"complete","courseNum":"C01","courseName":"示例课程","classBeginTime":"08:00","classEndTime":"09:35","signStatus":"1"},
+                    {"id":"pending","courseNum":"C01","courseName":"示例课程","classBeginTime":"08:00","classEndTime":"09:35","signStatus":"0"},
+                    {"courseNum":"C02","courseName":"无排课编号"}
+                ]}""")
+                "20261110" -> reply(request, "unavailable", 503)
+                else -> null
+            }
+        }
+        fixture.repo.login("fixture-student", "fixture-password", NetworkMode.DIRECT)
+        try {
+            val schedule = fixture.repo.loadDirectAttendance(0, LocalDate.of(2026, 9, 7))
+            assertEquals(10, schedule.week)
+            assertEquals(LocalDate.of(2026, 11, 9), schedule.days.first().date)
+            assertTrue(schedule.weeks.single { it.number == 10 }.current)
+            assertNull(schedule.academic)
+            assertEquals(listOf(LocalDate.of(2026, 11, 10)), schedule.days.filter { it.failed }.map { it.date })
+            val (course, missingId) = schedule.days.first().courses
+            assertFalse(missingId.attendanceAvailable)
+            assertEquals(listOf("complete", "pending"), course.scheduleIds)
+            assertEquals(setOf("complete"), course.completedIds)
+            assertEquals(1, schedule.attendanceTotal)
+            assertEquals(0, schedule.attendanceSigned)
+            val summary = fixture.repo.signCourses(listOf(course))
+            assertEquals(1, summary.success)
+            assertEquals(1, summary.skipped)
+            val signRequest = fixture.requests.single { it.url.encodedPath.endsWith("stu_scan_sign.action") }
+            assertEquals("pending", signRequest.url.queryParameter("courseSchedId"))
+            assertEquals("session-secret", signRequest.header("sessionId"))
+            val dates = fixture.requests.filter { it.url.encodedPath.endsWith("get_stu_course_sched.action") }
+            assertEquals((9..15).map { "202611${it.toString().padStart(2, '0')}" },
+                dates.mapNotNull { it.url.queryParameter("dateStr") }.sorted())
+            assertTrue(fixture.requests.all { it.url.host in setOf("sso.buaa.edu.cn", "uc.buaa.edu.cn", "iclass.buaa.edu.cn") })
+        } finally { fixture.repo.logout() }
+    }
+
+    @Test fun directAttendanceKeepsCurrentWeekAccessibleOutsideSemesterAndReportsTotalFailure() = runBlocking {
+        val fixture = Fixture(novemberSchoolClock) { request ->
+            if (request.url.encodedPath.endsWith("get_stu_course_sched.action") &&
+                request.url.queryParameter("dateStr") in (16..22).map { "202611$it" }) {
+                reply(request, "unavailable", 503)
+            } else null
+        }
+        fixture.repo.login("fixture-student", "fixture-password", NetworkMode.DIRECT)
+        try {
+            val current = fixture.repo.loadDirectAttendance(0, LocalDate.of(2027, 2, 22))
+            assertEquals(1, current.week)
+            assertEquals(LocalDate.of(2026, 11, 9), current.semesterStart)
+            assertEquals(current.semesterStart, current.days.first().date)
+            assertEquals(LocalDate.of(2026, 11, 16), current.weeks[1].start)
+            val error = runCatching { fixture.repo.loadDirectAttendance(2, current.semesterStart) }.exceptionOrNull()
+            assertTrue(error is IclassException && error.message.orEmpty().contains("iClass 签到课程读取失败"))
+        } finally { fixture.repo.logout() }
+    }
+
     @Test fun vpnLoginAndSigningKeepAllTrafficInsideSchoolWebVpn() = runBlocking {
         val endpoints = IclassProtocol.endpoints(NetworkMode.VPN)
         val fixture = Fixture { request ->
@@ -226,6 +290,49 @@ class IclassRepositoryTest {
         assertTrue("VPN must complete the portal cookie exchange", fixture.requests.any { it.url.toString() == "https://d.buaa.edu.cn/" })
         assertTrue(fixture.requests.last().url.encodedPath.startsWith("/http-8081/"))
         fixture.repo.logout()
+    }
+
+    @Test fun vpnLoginCompletesUcTicketExchangeWhenCasRedirectIsWrappedAsHttp() = runBlocking {
+        val endpoints = IclassProtocol.endpoints(NetworkMode.VPN)
+        val ucLogin = "https://uc.buaa.edu.cn/api/login".toHttpUrl().newBuilder()
+            .addQueryParameter("target", "https://uc.buaa.edu.cn/#/user/login").build()
+        val ucCallback = ucLogin.newBuilder().addQueryParameter("ticket", "fixture-ticket").build()
+        val casService = "http://sso.buaa.edu.cn/login".toHttpUrl().newBuilder()
+            .addQueryParameter("service", ucLogin.toString()).build()
+        val wrappedHttp = IclassProtocol.toWebVpnUrl(casService.toString())
+        val wrappedHttps = IclassProtocol.toWebVpnUrl(casService.newBuilder().scheme("https").port(443).build().toString())
+        var ticketExchanged = false
+        val fixture = Fixture { request ->
+            when {
+                request.url == endpoints.login && request.method == "GET" ->
+                    reply(request, "<form id='loginForm'><input name='execution' value='vpn-state'></form>")
+                request.url == endpoints.login && request.method == "POST" ->
+                    reply(request, "", 302, "https://d.buaa.edu.cn/login?cas_login=true&ticket=vpn-ticket")
+                request.url.encodedPath == "/login" && request.url.queryParameter("ticket") == "vpn-ticket" ->
+                    reply(request, "<p>VPN ready</p>")
+                request.url == IclassProtocol.toWebVpnUrl(ucLogin.toString()) ->
+                    reply(request, "", 302, wrappedHttp.encodedPath + "?" + wrappedHttp.encodedQuery)
+                request.url == wrappedHttp ->
+                    reply(request, "<form id='loginForm'><input name='execution' value='new-state'></form>")
+                request.url == wrappedHttps ->
+                    reply(request, "", 302, ucCallback.toString())
+                request.url == IclassProtocol.toWebVpnUrl(ucCallback.toString()) -> {
+                    ticketExchanged = true
+                    reply(request, "<p>UC activated</p>")
+                }
+                request.url.encodedPath.endsWith("/api/uc/status") ->
+                    reply(request, if (ticketExchanged) """{"code":0,"data":{"schoolid":"123","name":"演示用户"}}"""
+                        else """{"code":10600,"data":null}""")
+                else -> null
+            }
+        }
+        try {
+            assertEquals("123", fixture.repo.login("vpn-user", "vpn-password", NetworkMode.VPN).userId)
+            assertTrue(fixture.requests.all { it.url.host == "d.buaa.edu.cn" && it.url.scheme == "https" })
+            assertEquals(listOf(endpoints.login), fixture.requests.filter { it.method == "POST" }.map { it.url })
+            assertTrue(fixture.requests.none { it.url == wrappedHttp })
+            assertTrue(ticketExchanged)
+        } finally { fixture.repo.logout() }
     }
 
     @Test fun allFailedDaysDoNotBecomeAnEmptySuccessfulTimetable() = runBlocking {
@@ -338,6 +445,8 @@ class IclassRepositoryTest {
     }
 
     companion object {
+        private val novemberSchoolClock = Clock.fixed(Instant.parse("2026-11-08T16:30:00Z"), ZoneId.of("Asia/Shanghai"))
+
         private fun reply(request: Request, body: String, code: Int = 200, location: String? = null): Response =
             Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(code).message("Offline test")
                 .body(body.toResponseBody("text/plain; charset=utf-8".toMediaType()))

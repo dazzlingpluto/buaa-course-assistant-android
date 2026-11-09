@@ -13,6 +13,7 @@ import javax.crypto.spec.SecretKeySpec
 /** Pure protocol parsing, shared by the native client and offline regression tests. */
 object IclassProtocol {
     private val vpnKey = "wrdvpnisthebest!".toByteArray(Charsets.UTF_8)
+    private val vpnCasHost = encryptHost("sso.buaa.edu.cn")
     private val loginNamePattern = Regex("loginName=([^&#\\\"'<>\\s]+)", RegexOption.IGNORE_CASE)
     private val signPaths = setOf("/app/common/get_timestamp.action", "/app/course/stu_scan_sign.action")
 
@@ -96,10 +97,14 @@ object IclassProtocol {
 
     fun academicRedirect(from: HttpUrl, location: String, mode: NetworkMode): HttpUrl {
         val redirect = from.resolve(location) ?: throw IclassException("服务器跳转地址无效")
-        val target = if (redirect.scheme == "http" && redirect.host == "sso.buaa.edu.cn" && redirect.port == 80) {
-            redirect.newBuilder().scheme("https").port(443).build()
-        } else {
-            redirect
+        val target = when {
+            redirect.scheme == "http" && redirect.host == "sso.buaa.edu.cn" && redirect.port == 80 ->
+                redirect.newBuilder().scheme("https").port(443).build()
+            // The gateway may already have wrapped the upstream CAS URL.
+            mode == NetworkMode.VPN && redirect.scheme == "https" && redirect.host == "d.buaa.edu.cn" &&
+                redirect.encodedPath.startsWith("/http/$vpnCasHost/") ->
+                redirect.newBuilder().encodedPath("/https/" + redirect.encodedPath.removePrefix("/http/")).build()
+            else -> redirect
         }
         if (!isTrustedUrl(target)) throw untrustedTarget(target)
         return if (mode == NetworkMode.VPN) toWebVpnUrl(target.toString()) else target
@@ -113,7 +118,7 @@ object IclassProtocol {
         if (!isTrustedUrl(url) || url.scheme != "https") return false
         return when (url.host) {
             "sso.buaa.edu.cn" -> true
-            "d.buaa.edu.cn" -> url.encodedPath.startsWith("/https/${encryptHost("sso.buaa.edu.cn")}/")
+            "d.buaa.edu.cn" -> url.encodedPath.startsWith("/https/$vpnCasHost/")
             else -> false
         }
     }

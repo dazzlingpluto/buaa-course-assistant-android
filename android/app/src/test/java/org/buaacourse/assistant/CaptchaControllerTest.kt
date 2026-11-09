@@ -38,8 +38,10 @@ class CaptchaControllerTest {
         assertEquals(1, repo.calls); assertEquals(0, repo.logouts); assertEquals(0, store.writes)
         assertFalse(controller.state.value.busy); assertNull(controller.state.value.user)
         assertNotNull(controller.state.value.captcha); assertEquals("demo-password", controller.state.value.password)
+        assertEquals("统一认证需要验证码，请输入后继续。", controller.state.value.logs.first().message)
         controller.login(); advanceUntilIdle()
         assertEquals(1, repo.calls) // Blank captcha never reaches network.
+        assertEquals("请输入验证码。", controller.state.value.logs.first().message)
         controller.setCaptcha("manual-demo-code"); controller.login(); advanceUntilIdle()
         assertEquals(2, repo.calls); assertEquals(1, store.writes)
         assertNotNull(controller.state.value.user); assertNull(controller.state.value.captcha)

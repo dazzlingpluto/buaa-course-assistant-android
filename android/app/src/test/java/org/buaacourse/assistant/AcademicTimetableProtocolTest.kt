@@ -90,15 +90,14 @@ class AcademicTimetableProtocolTest {
         assertTrue(AcademicTimetableProtocol.parseUndergraduateWeeks("""{"code":"0","datas":[]}""", term).isEmpty())
     }
 
-    @Test fun graduateTermsSelectTheMostRecentTerm() {
+    @Test fun graduateTermOrderDoesNotClaimTheMostRecentTermIsCurrent() {
         val body = """{"code":"0","datas":{"kfdxnxqcx":{"totalSize":2,"rows":[
             {"XNXQDM":"20252","XNXQDM_DISPLAY":"旧学期"},
             {"XNXQDM":"20261","XNXQDM_DISPLAY":"当前学期"}
         ]}}}"""
         val result = AcademicTimetableProtocol.parseGraduateTerms(body)
         assertEquals(listOf("20261", "20252"), result.map { it.code })
-        assertTrue(result.first().selected)
-        assertFalse(result.last().selected)
+        assertTrue(result.none { it.selected })
         assertFailure { AcademicTimetableProtocol.parseGraduateTerms(body.replace("\"totalSize\":2,", "")) }
     }
 
@@ -206,6 +205,22 @@ class AcademicTimetableProtocolTest {
         assertEquals("21:30", lesson.startTime)
         assertEquals("22:15", lesson.endTime)
         assertEquals(LocalDate.of(2026, 9, 20), lesson.date)
+    }
+
+    @Test fun graduateInfersMissingSchemeOnlyWhenOneSchemeIsReturned() {
+        val body = graduate()
+        val row = body.getJSONArray("jgList").getJSONObject(0)
+        row.put("JCFADM", JSONObject.NULL)
+        val lesson = graduateWeek(body).single()
+        assertEquals("08:00", lesson.startTime)
+        assertEquals("09:35", lesson.endTime)
+
+        row.remove("JCFADM")
+        assertEquals(lesson, graduateWeek(body).single())
+
+        val schemes = body.getJSONArray("jcfaList")
+        schemes.put(JSONObject(schemes.getJSONObject(0).toString().replace("\"01\"", "\"02\"")))
+        assertFailure { graduateWeek(body) }
     }
 
     @Test fun graduateChecksIdentitiesAndFieldsEvenForUnselectedWeeks() {

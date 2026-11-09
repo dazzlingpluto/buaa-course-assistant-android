@@ -34,10 +34,10 @@ internal object AcademicAccessProtocol {
     fun authenticatedUser(body: String): UserSession {
         val envelope = body.asObject()
         val account = envelope?.takeIf { it.hasSuccessCode() }?.optJSONObject("data")
-        val schoolId = account?.wireText("schoolid").orEmpty()
-        if (schoolId.isEmpty()) throw IclassException("统一认证会话尚未建立，请重新登录")
+        val userId = account?.let { it.wireText("schoolid").ifEmpty { it.wireText("username") } }.orEmpty()
+        if (userId.isEmpty()) throw IclassException("统一认证会话尚未建立，请重新登录")
         val name = account?.wireText("name").orEmpty()
-        return UserSession(schoolId, name.ifEmpty { schoolId })
+        return UserSession(userId, name.ifEmpty { userId })
     }
 
     private fun String.asObject(): JSONObject? = try {

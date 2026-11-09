@@ -44,6 +44,7 @@ class AssistantControllerTest {
         var logoutCalls = 0
         var signCalls = 0
         var loadCalls = 0
+        var directLoadCalls = 0
         var linkCalls = 0
         var loginFailure = false
         var loadFailure = false
@@ -54,6 +55,8 @@ class AssistantControllerTest {
         var signGate: CompletableDeferred<Unit>? = null
         var lastWeek = 0
         var lastSemesterStart: LocalDate? = null
+        var lastDirectStart: LocalDate? = null
+        var directStart: LocalDate? = null
         var automaticWeek = 2
         var detectedType = StudentType.GRADUATE
         var returnedStart: LocalDate? = null
@@ -97,6 +100,16 @@ class AssistantControllerTest {
             linkGate?.await()
             if (linkFailure) throw IOException("private iClass failure")
             return schedule
+        }
+        override suspend fun loadDirectAttendance(week: Int, semesterStart: LocalDate): WeekSchedule {
+            directLoadCalls++
+            lastDirectStart = semesterStart
+            val actualWeek = if (week == 0) automaticWeek else week
+            val actualStart = directStart ?: semesterStart
+            val monday = actualStart.plusWeeks(actualWeek.toLong() - 1)
+            return WeekSchedule(actualWeek, actualStart, listOf(
+                DaySchedule(monday, listOf(Course("one", "iClass 示例课程", scheduleIds = listOf("one", "teacher-two")))),
+            ))
         }
         override suspend fun signCourses(courses: List<Course>): SignSummary {
             signCalls++
@@ -566,8 +579,53 @@ class AssistantControllerTest {
         assertNotNull(controller.state.value.user)
         assertNull(controller.state.value.schedule)
         assertNotNull(controller.state.value.error)
+        assertEquals(AttendanceMode.TIMETABLE, controller.state.value.attendanceMode)
+        assertEquals(0, repo.directLoadCalls)
         assertEquals(0, repo.linkCalls)
         assertEquals(0, repo.signCalls)
+    }
+
+    @Test fun directAttendanceCanSignAfterOfficialFailureAndSwitchBackInTheSameSession() = runTest {
+        val iClassStart = start.plusWeeks(1)
+        val repo = FakeRepository().apply {
+            loadFailure = true
+            directStart = iClassStart
+        }
+        val controller = controller(repo)
+        advanceUntilIdle()
+        enter(controller)
+        controller.login()
+        advanceUntilIdle()
+        assertNull(controller.state.value.schedule)
+
+        controller.setAttendanceMode(AttendanceMode.ICLASS)
+        advanceUntilIdle()
+        val direct = checkNotNull(controller.state.value.schedule)
+        val course = direct.days.single().courses.single()
+        assertEquals(AttendanceMode.ICLASS, controller.state.value.attendanceMode)
+        assertNull(direct.academic)
+        assertNull(controller.state.value.error)
+        assertEquals(1, repo.loadCalls)
+        assertEquals(0, repo.linkCalls)
+        assertEquals(1, repo.directLoadCalls)
+        assertEquals(start, repo.lastDirectStart)
+
+        controller.signCourse(course)
+        advanceUntilIdle()
+        assertEquals(listOf("one", "teacher-two"), repo.submittedCourses.single().scheduleIds)
+        assertEquals(2, repo.directLoadCalls)
+        assertEquals(iClassStart, repo.lastDirectStart)
+        assertTrue(controller.state.value.schedule!!.days.single().courses.single().signed)
+
+        repo.loadFailure = false
+        controller.setAttendanceMode(AttendanceMode.TIMETABLE)
+        advanceUntilIdle()
+        assertEquals(AttendanceMode.TIMETABLE, controller.state.value.attendanceMode)
+        assertEquals("term-one", controller.state.value.schedule!!.academic?.termCode)
+        assertEquals(start, repo.lastSemesterStart)
+        assertEquals(2, repo.loadCalls)
+        assertEquals(1, repo.linkCalls)
+        assertEquals(1, repo.loginCalls)
     }
 
     @Test fun currentWeekRequestsCalendarSelectionAndNavigationRejectsMissingWeekNumbers() = runTest {

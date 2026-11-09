@@ -20,6 +20,7 @@ class GsmisIntegrationTest {
 
     private class Fixture(val mode: NetworkMode = NetworkMode.DIRECT) {
         var denied = false
+        var graduatePortalDetected = true
         var terms = """{"code":0,"datas":{"kfdxnxqcx":{"totalSize":1,"rows":[{"XNXQDM":"20261","XNXQDM_DISPLAY":"2026-2027 学年第一学期"}]}}}"""
         var academic = graduateBody("C001", "有效课程", "class-a")
         var iclassCourses = """{"STATUS":0,"result":[{"id":"active","courseNum":"C001","courseName":"有效课程","classBeginTime":"08:00","classEndTime":"09:35"},{"id":"withdrawn","courseNum":"C002","courseName":"已退课程","classBeginTime":"08:00","classEndTime":"09:35"}]}"""
@@ -33,7 +34,10 @@ class GsmisIntegrationTest {
             when {
                 path.endsWith("/api/login") -> reply(r, "UC activated")
                 path.endsWith("/api/uc/status") -> reply(r, """{"code":0,"data":{"schoolid":"fixture-student","name":"演示用户"}}""")
-                path.endsWith("/home/currentUser.do") -> reply(r, "", 302, mapped("https://byxt.buaa.edu.cn/jwapp/sys/byrhmhsy/currentUser.do").toString())
+                path.endsWith("/home/currentUser.do") -> if (graduatePortalDetected)
+                    reply(r, "", 302, mapped("https://byxt.buaa.edu.cn/jwapp/sys/byrhmhsy/currentUser.do").toString())
+                    else reply(r, "Access denied", 403)
+                path.endsWith("/student/schoolCalendars.do") -> reply(r, "Access denied", 403)
                 path.endsWith("/byrhmhsy/currentUser.do") -> reply(r, "{}")
                 path.endsWith("/wdkbapp/*default/index.do") && denied -> reply(r, "请在校园网环境下访问")
                 path.endsWith("/wdkbapp/*default/index.do") && r.url.queryParameter("ticket") == null -> {
@@ -94,6 +98,58 @@ class GsmisIntegrationTest {
         f.repo.logout()
     }
 
+    @Test fun offeredFutureSemesterDoesNotOverrideTheCurrentSemesterAfterUndergraduateDenial() = runBlocking {
+        val f = Fixture().also {
+            it.graduatePortalDetected = false
+            it.terms = twoSemesters.replace("2026-2027学年第一学期", "2026-2027-1")
+            it.academic = it.academic.replace("100000000000000000", "000000000100000000")
+        }
+        f.repo.login("fixture-student", "fixture-password", f.mode)
+        val result = f.repo.loadWeek(10, start)
+        assertEquals(StudentType.GRADUATE, result.studentType)
+        assertEquals("20261", result.academic!!.termCode)
+        assertEquals(1, result.total)
+        assertEquals(LocalDate.of(2026, 11, 9), result.days.first().date)
+        assertTrue(f.requests.any { it.url.encodedPath.endsWith("/student/schoolCalendars.do") })
+        val post = f.requests.single { it.url.encodedPath.endsWith("loadXskbData.do") }.body as FormBody
+        assertEquals("20261", (0 until post.size).associate { post.name(it) to post.value(it) }["XNXQDM"])
+        f.repo.logout()
+    }
+
+    @Test fun unavailableCurrentSemesterLeavesTheTermPickerUsable() = runBlocking {
+        val f = Fixture().also {
+            it.terms = """{"code":0,"datas":{"kfdxnxqcx":{"totalSize":1,"rows":[
+                {"XNXQDM":"20262","XNXQDM_DISPLAY":"2026-2027学年第二学期"}]}}}"""
+            it.academic = """{"code":1,"rwList":[],"jgList":[]}"""
+        }
+        f.repo.login("fixture-student", "fixture-password", f.mode)
+        val initial = f.repo.loadWeek(0, start)
+        assertEquals(AcademicStatus.SELECT_TERM, initial.academic?.status)
+        assertEquals(listOf("20262"), initial.academic!!.terms.map { it.code })
+        assertTrue(initial.days.isEmpty())
+        assertTrue(f.requests.none { it.url.encodedPath.endsWith("loadXskbData.do") })
+
+        f.repo.selectAcademicTerm("20262")
+        val spring = f.repo.loadWeek(0, start)
+        assertEquals(AcademicStatus.UNAVAILABLE, spring.academic?.status)
+        assertEquals(listOf("20262"), spring.academic!!.terms.map { it.code })
+        assertTrue(spring.days.isEmpty())
+        f.repo.logout()
+    }
+
+    @Test fun explicitGraduateSemesterChoiceOverridesTheDefaultAndSurvivesRefresh() = runBlocking {
+        val f = Fixture().also { it.terms = twoSemesters }
+        f.repo.login("fixture-student", "fixture-password", f.mode)
+        assertEquals("20261", f.repo.loadWeek(1, start).academic!!.termCode)
+        f.repo.selectAcademicTerm("20262")
+        f.academic = f.academic.replace("\"KCMC\":\"有效课程\"", "\"KCMC\":\"有效课程\",\"SCSKRQ\":\"2027-02-22\"")
+        val spring = f.repo.loadWeek(1, start)
+        assertEquals("20262", spring.academic!!.termCode)
+        assertEquals(LocalDate.of(2027, 2, 22), spring.semesterStart)
+        assertEquals("20262", f.repo.loadWeek(1, start).academic!!.termCode)
+        f.repo.logout()
+    }
+
     @Test fun recordsWithDifferentNamesCannotShareAcademicApprovalThroughCardMerging() = runBlocking {
         val f = Fixture().also {
             it.iclassCourses = """{"STATUS":0,"result":[
@@ -142,6 +198,11 @@ class GsmisIntegrationTest {
     }
 
     companion object {
+        private val twoSemesters = """{"code":0,"datas":{"kfdxnxqcx":{"totalSize":2,"rows":[
+            {"XNXQDM":"20262","XNXQDM_DISPLAY":"2026-2027学年第二学期"},
+            {"XNXQDM":"20261","XNXQDM_DISPLAY":"2026-2027学年第一学期"}
+        ]}}}"""
+
         private fun graduateBody(code: String, name: String, classId: String) = """{
             "code":1,"rwList":[{"BJDM":"$classId","KCMC":"$name"}],
             "jgList":[{"BJDM":"$classId","KCDM":"$code","XQ":1,"ZCBH":"100000000000000000",

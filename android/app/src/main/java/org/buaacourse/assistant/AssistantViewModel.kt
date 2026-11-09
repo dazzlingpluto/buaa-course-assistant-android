@@ -44,6 +44,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun clearSavedCredentials() = controller.clearSavedCredentials()
     fun login() = controller.login()
     fun logout() = controller.logout()
+    fun setAttendanceMode(value: AttendanceMode) = controller.setAttendanceMode(value)
     fun selectWeek(value: Int) = controller.selectWeek(value)
     fun selectAcademicTerm(value: String) = controller.selectAcademicTerm(value)
     fun currentWeek() = controller.currentWeek()
@@ -82,10 +83,9 @@ internal class AssistantController(
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val today: () -> LocalDate = { LocalDate.now() },
 ) {
+    private val defaultSemesterStart = AssistantUiState().semesterStart
     private val mutableState = MutableStateFlow(AssistantUiState(
         language = runCatching { preferences.language() }.getOrDefault(AppLanguage.ZH),
-        // This release uses the announced 2026–2027 semester start, even after an upgrade.
-        semesterStart = LocalDate.of(2026, 9, 7),
     ))
     val state = mutableState.asStateFlow()
     private var operation: Job? = null
@@ -187,11 +187,11 @@ internal class AssistantController(
         val username = snapshot.username.trim()
         val password = snapshot.password
         if (username.isBlank() || password.isEmpty()) {
-            mutableState.update { it.copy(error = text("请输入账号和密码。", "Enter your username and password.")) }
+            reportError(text("请输入账号和密码。", "Enter your username and password."))
             return
         }
         if (snapshot.captcha != null && snapshot.captchaInput.isBlank()) {
-            mutableState.update { it.copy(error = text("请输入验证码。", "Enter the verification code.")) }
+            reportError(text("请输入验证码。", "Enter the verification code."))
             return
         }
         runOperation(text("正在登录…", "Signing in…")) {
@@ -210,14 +210,19 @@ internal class AssistantController(
         } catch (error: Exception) {
             if (error is CaptchaRequiredException) {
                 mutableState.update { it.copy(captcha = error.captcha, captchaInput = "", error = error.message) }
-                appendLog(text("统一认证需要验证码，请输入后继续。", "Verification required. Enter the code to continue."), "info")
+                if (snapshot.captchaInput.isBlank()) {
+                    appendLog(text("统一认证需要验证码，请输入后继续。", "Verification required. Enter the code to continue."))
+                } else {
+                    appendLog(text("登录尚未完成，请重新输入验证码后重试。", "Sign-in incomplete. Enter the verification code again."), "error")
+                }
                 return
             }
             repository.logout()
             mutableState.update { it.copy(captcha = null, captchaInput = "") }
             throw error
         }
-        mutableState.update { it.copy(user = user, username = username, password = "", captcha = null, captchaInput = "", studentType = StudentType.AUTO, error = null) }
+        mutableState.update { it.copy(user = user, username = username, password = "", captcha = null, captchaInput = "",
+            studentType = StudentType.AUTO, semesterStart = defaultSemesterStart, error = null) }
         appendLog(text("登录成功。", "Signed in."), "success")
         if (snapshot.remember) {
             try {
@@ -240,7 +245,7 @@ internal class AssistantController(
             disableSavedAutoLogin()
             withContext(io) { repository.logout() }
             mutableState.update { it.copy(user = null, schedule = null, password = "", studentType = StudentType.AUTO,
-                autoLogin = false, error = null, message = null) }
+                attendanceMode = AttendanceMode.TIMETABLE, autoLogin = false, error = null, message = null) }
             restoreSavedCredentials()
             appendLog(text("已退出登录。", "Signed out."), "info")
         }
@@ -267,6 +272,15 @@ internal class AssistantController(
         }
     }
 
+    fun setAttendanceMode(value: AttendanceMode) {
+        val current = state.value
+        if (current.user == null || current.busy || current.attendanceMode == value) return
+        runOperation(attendanceLoadLabel(value)) {
+            mutableState.update { it.copy(attendanceMode = value, schedule = null, week = 1, message = null) }
+            loadWeekInternal(0)
+        }
+    }
+
     fun selectWeek(value: Int) {
         if (value <= 0) return
         val knownWeeks = state.value.schedule?.weeks.orEmpty()
@@ -274,14 +288,24 @@ internal class AssistantController(
         requestWeek(value)
     }
     private fun requestWeek(value: Int) {
-        if (state.value.user == null || state.value.busy) return
-        runOperation(text("正在加载课表…", "Loading schedule…")) { loadWeekInternal(value) }
+        val current = state.value
+        if (current.user == null || current.busy) return
+        runOperation(attendanceLoadLabel(current.attendanceMode)) { loadWeekInternal(value) }
+    }
+    private fun attendanceLoadLabel(mode: AttendanceMode) = when (mode) {
+        AttendanceMode.TIMETABLE -> text("正在加载课表…", "Loading schedule…")
+        AttendanceMode.ICLASS -> text("正在读取 iClass 签到课程…", "Loading iClass attendance…")
     }
     fun currentWeek() = requestWeek(0)
-    fun refresh() = selectWeek(state.value.week)
+    fun refresh() {
+        val current = state.value
+        if (current.attendanceMode == AttendanceMode.ICLASS && current.schedule == null) requestWeek(0)
+        else selectWeek(current.week)
+    }
 
     fun selectAcademicTerm(value: String) {
-        if (state.value.user == null || state.value.busy || value.isBlank()) return
+        val current = state.value
+        if (current.user == null || current.busy || current.attendanceMode != AttendanceMode.TIMETABLE || value.isBlank()) return
         runOperation(text("正在核对教务课表…", "Checking the academic timetable…")) {
             // A failed term change must not leave the previous term's courses visible.
             mutableState.update { it.copy(schedule = null) }
@@ -335,15 +359,19 @@ internal class AssistantController(
             loadWeekInternal(current.week, signedIds)
         } catch (cancelled: CancellationException) { throw cancelled
         } catch (_: Exception) {
-            val warning = text("签到已处理，但课表刷新失败，请手动刷新。", "Attendance processed, but the schedule could not refresh. Please refresh again.")
+            val warning = if (state.value.attendanceMode == AttendanceMode.ICLASS)
+                text("签到已处理，但 iClass 列表刷新失败，请手动刷新。", "Attendance processed. Refresh the iClass list to try again.")
+            else text("签到已处理，但课表刷新失败，请手动刷新。", "Attendance processed, but the schedule could not refresh. Please refresh again.")
             mutableState.update { it.copy(error = warning) }
             appendLog(warning, "warning")
         }
     }
 
     private suspend fun loadWeekInternal(week: Int, signedIds: Set<String> = emptySet()) {
-        val start = state.value.semesterStart
-        val knownIds = signedIds + if (week == state.value.week) state.value.schedule?.days.orEmpty().flatMap { it.courses }
+        val current = state.value
+        val direct = current.attendanceMode == AttendanceMode.ICLASS
+        val start = if (direct) current.schedule?.semesterStart ?: defaultSemesterStart else current.semesterStart
+        val knownIds = signedIds + if (week == current.week) current.schedule?.days.orEmpty().flatMap { it.courses }
             .flatMap { if (it.attendanceSessions.isEmpty()) it.completedIds else it.attendanceSessions.flatMap { slot -> slot.completedIds } }.toSet() else emptySet()
         mutableState.update { it.copy(
             week = if (week > 0) week else it.week,
@@ -351,8 +379,24 @@ internal class AssistantController(
             // useful; the previous academic comparison is no longer current.
             schedule = if (week > 0 && it.week == week && it.schedule?.semesterStart == start) it.schedule?.withoutVerifiedAttendance() else null,
         ) }
+        if (direct) {
+            val schedule = withContext(io) { repository.loadDirectAttendance(week, start) }.applyKnownResults(knownIds)
+            // Keep the official term's anchor separate from the direct list's calendar.
+            mutableState.update { it.copy(schedule = schedule, week = schedule.week) }
+            reportPartialFailure(schedule)
+            if (schedule.days.none { it.failed }) {
+                appendLog(text("iClass 签到列表已加载，共 ${schedule.attendanceTotal} 节。",
+                    "iClass attendance loaded: ${schedule.attendanceTotal} sessions."), "success")
+            }
+            return
+        }
         val schedule = withContext(io) { repository.loadWeek(week, start) }
         val official = schedule.withoutVerifiedAttendance(clearComparison = false)
+        if (official.academic?.status in setOf(AcademicStatus.SELECT_TERM, AcademicStatus.UNAVAILABLE) && official.days.isEmpty()) {
+            mutableState.update { it.copy(schedule = official, week = official.week, studentType = official.studentType) }
+            reportAcademicComparison(official)
+            return
+        }
         // Publish the official timetable before any optional iClass request.
         mutableState.update { it.copy(schedule = official, week = official.week,
             semesterStart = official.semesterStart, studentType = official.studentType,
@@ -467,8 +511,12 @@ internal class AssistantController(
 
     private fun reportOperationError(error: Exception) {
         val detail = redact(error.message.orEmpty()).ifBlank { text("操作失败，请检查网络后重试。", "Operation failed. Check your connection and try again.") }
-        mutableState.update { it.copy(error = detail) }
-        appendLog(detail, "error")
+        reportError(detail)
+    }
+
+    private fun reportError(value: String) {
+        mutableState.update { it.copy(error = value) }
+        appendLog(value, "error")
     }
 
     private fun persist(block: () -> Unit) {

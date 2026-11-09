@@ -74,6 +74,7 @@ data class AssistantActions(
     val currentWeek: () -> Unit = {},
     val refresh: () -> Unit = {},
     val academicTerm: (String) -> Unit = {},
+    val attendanceMode: (AttendanceMode) -> Unit = {},
     val sign: (Course) -> Unit = {},
     val dismissMessage: () -> Unit = {},
     val dismissError: () -> Unit = {},
@@ -100,6 +101,7 @@ internal fun AssistantScreen(viewModel: AssistantViewModel) {
             currentWeek = viewModel::currentWeek,
             refresh = viewModel::refresh,
             academicTerm = viewModel::selectAcademicTerm,
+            attendanceMode = viewModel::setAttendanceMode,
             sign = viewModel::signCourse,
             dismissMessage = viewModel::dismissMessage,
             dismissError = viewModel::dismissError,
@@ -139,10 +141,10 @@ fun AssistantContent(state: AssistantUiState, actions: AssistantActions = Assist
             val snackbar = remember { SnackbarHostState() }
             val scrollState = rememberLazyListState()
             var logOpen by rememberSaveable { mutableStateOf(false) }
-            LaunchedEffect(state.message, state.error) {
-                (state.error ?: state.message)?.let {
-                    snackbar.showSnackbar(it, duration = if (state.error != null) SnackbarDuration.Long else SnackbarDuration.Short)
-                    if (state.error == null) actions.dismissMessage()
+            LaunchedEffect(state.message) {
+                state.message?.let {
+                    snackbar.showSnackbar(it)
+                    actions.dismissMessage()
                 }
             }
             Scaffold(
@@ -168,17 +170,6 @@ fun AssistantContent(state: AssistantUiState, actions: AssistantActions = Assist
                                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                                 Text(state.busyMessage.ifBlank { words.text("处理中，请稍候…", "Working, please wait…") }, color = SoftInk)
-                            }
-                        }
-                    }
-                    state.error?.let { error ->
-                        item(key = "error") {
-                            Surface(modifier = Modifier.pageWidth().padding(top = 16.dp).testTag("error_message"),
-                                color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(14.dp)) {
-                                Column(Modifier.padding(14.dp).semantics { liveRegion = LiveRegionMode.Polite }) {
-                                    Text(error, color = MaterialTheme.colorScheme.onErrorContainer)
-                                    TextButton(onClick = actions.dismissError, modifier = Modifier.align(Alignment.End)) { Text(words.text("关闭", "Dismiss")) }
-                                }
                             }
                         }
                     }

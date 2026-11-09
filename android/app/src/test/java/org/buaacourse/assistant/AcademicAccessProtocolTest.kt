@@ -24,8 +24,10 @@ class AcademicAccessProtocolTest {
         assertTrue(runCatching { IclassProtocol.academicRedirect(from, "http://sso.buaa.edu.cn:8080/", NetworkMode.DIRECT) }.isFailure)
     }
     @Test fun publicOrInvalidUcResponseCannotBecomeAuthenticatedSession() {
-        for (body in listOf("{}", "{\"code\":0,\"data\":{}}", "{\"code\":1,\"data\":{\"schoolid\":\"123\"}}"))
+        for (body in listOf("{}", "{\"code\":0,\"data\":{}}", "{\"code\":1,\"data\":{\"schoolid\":\"123\",\"username\":\"fixture-user\"}}"))
             assertTrue(runCatching { AcademicAccessProtocol.authenticatedUser(body) }.isFailure)
         assertEquals("123", AcademicAccessProtocol.authenticatedUser("{\"code\":0,\"data\":{\"schoolid\":\"123\",\"name\":\"演示用户\"}}").userId)
+        assertEquals("fixture-user", AcademicAccessProtocol.authenticatedUser(
+            """{"code":0,"data":{"schoolid":null,"username":"fixture-user"}}""").userId)
     }
 }

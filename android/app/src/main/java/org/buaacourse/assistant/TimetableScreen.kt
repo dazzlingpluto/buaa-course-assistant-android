@@ -36,19 +36,20 @@ import java.time.LocalDate
 @Composable
 internal fun TimetableContent(state: AssistantUiState, actions: AssistantActions) {
     val words = UiWords(state.language)
+    val directAttendance = state.attendanceMode == AttendanceMode.ICLASS
     val snackbar = remember { SnackbarHostState() }
     var logOpen by rememberSaveable { mutableStateOf(false) }
-    var academicOpen by rememberSaveable { mutableStateOf(false) }
-    var selectedKey by rememberSaveable(state.user?.userId, state.week) { mutableStateOf<String?>(null) }
+    var academicOpen by rememberSaveable(state.attendanceMode) { mutableStateOf(false) }
+    var selectedKey by rememberSaveable(state.user?.userId, state.week, state.attendanceMode) { mutableStateOf<String?>(null) }
     var overlapKeys by remember { mutableStateOf<List<String>>(emptyList()) }
     var lastTerm by remember { mutableStateOf(state.schedule?.academic?.termCode) }
     val gridVertical = rememberScrollState()
-    LaunchedEffect(state.week) { gridVertical.scrollTo(0) }
+    LaunchedEffect(state.week, state.attendanceMode) { gridVertical.scrollTo(0) }
     val entries: List<Pair<LocalDate?, Course>> = state.schedule?.days.orEmpty().flatMap { day -> day.courses.map { day.date to it } } +
         state.schedule?.unscheduled.orEmpty().map { null to it }
     val selected = entries.find { TimetableLayout.key(it.first, it.second) == selectedKey }
     val overlaps = entries.filter { TimetableLayout.key(it.first, it.second) in overlapKeys }
-    LaunchedEffect(state.user?.userId, state.week, state.schedule?.academic?.termCode) {
+    LaunchedEffect(state.user?.userId, state.week, state.attendanceMode, state.schedule?.academic?.termCode) {
         overlapKeys = emptyList()
         state.schedule?.academic?.termCode?.let { term ->
             if (lastTerm != null && term != lastTerm) selectedKey = null
@@ -56,10 +57,11 @@ internal fun TimetableContent(state: AssistantUiState, actions: AssistantActions
         }
     }
     LaunchedEffect(selectedKey, selected) { if (selected == null) selectedKey = null }
-    LaunchedEffect(state.message, state.error) {
-        (state.error ?: state.message)?.let {
-            snackbar.showSnackbar(it, duration = if (state.error != null) SnackbarDuration.Long else SnackbarDuration.Short)
-            if (state.error == null) actions.dismissMessage()
+    LaunchedEffect(state.message, state.error, directAttendance) {
+        val snackbarError = state.error.takeUnless { directAttendance }
+        (snackbarError ?: state.message)?.let {
+            snackbar.showSnackbar(it, duration = if (snackbarError != null) SnackbarDuration.Long else SnackbarDuration.Short)
+            if (snackbarError == null) actions.dismissMessage()
         }
     }
     BackHandler(enabled = selected != null || overlapKeys.isNotEmpty()) {
@@ -78,7 +80,7 @@ internal fun TimetableContent(state: AssistantUiState, actions: AssistantActions
             Column(Modifier.fillMaxSize().padding(padding).testTag("timetable_page")) {
                 TimetableHeader(state, actions, words)
                 Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    TextButton(onClick = { academicOpen = !academicOpen }, modifier = Modifier.fillMaxWidth().testTag("academic_toggle"), shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+                    if (!directAttendance) TextButton(onClick = { academicOpen = !academicOpen }, modifier = Modifier.fillMaxWidth().testTag("academic_toggle"), shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
                         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(state.schedule?.academic?.termName?.takeIf { it.isNotBlank() } ?: words.text("正式课表", "Official timetable"),
                                 modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
@@ -97,7 +99,7 @@ internal fun TimetableContent(state: AssistantUiState, actions: AssistantActions
                         words.text("已签 ${state.schedule?.attendanceSigned ?: 0} / 共 ${state.schedule?.attendanceTotal ?: 0} 节需签到", "${state.schedule?.attendanceSigned ?: 0} / ${state.schedule?.attendanceTotal ?: 0} attendance records signed"),
                         Modifier.padding(bottom = 6.dp).testTag("attendance_totals"), textAlign = TextAlign.Center, fontSize = 11.sp, color = SoftInk)
                 }
-                if (academicOpen) {
+                if (!directAttendance && academicOpen) {
                     Column(Modifier.fillMaxWidth().heightIn(max = 250.dp).verticalScroll(rememberScrollState())) {
                         AcademicPanel(state.schedule?.academic, state.busy, actions.academicTerm, words, resolvedStudentType(state))
                         Spacer(Modifier.height(8.dp))
@@ -106,19 +108,34 @@ internal fun TimetableContent(state: AssistantUiState, actions: AssistantActions
                 if (state.busy) {
                     LinearProgressIndicator(Modifier.fillMaxWidth().testTag("timetable_progress"))
                 }
-                state.schedule?.attendanceMessage?.takeIf(String::isNotBlank)?.let { message ->
+                state.schedule?.attendanceMessage?.takeIf { !directAttendance && it.isNotBlank() }?.let { message ->
                     Text(if (message.contains("正在")) words.text("正在关联签到…", "Linking attendance…") else words.text("签到暂不可用 · 可继续查看课表", "Attendance is temporarily unavailable. Your timetable is ready."),
                         Modifier.fillMaxWidth().background(Tint).padding(horizontal = 14.dp, vertical = 7.dp).testTag("attendance_status"), color = SoftInk, fontSize = 12.sp)
                 }
-                state.error?.let {
+                state.error?.takeUnless { directAttendance }?.let {
                     Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(it, Modifier.weight(1f).testTag("error_message"), maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
                         TextButton(onClick = actions.dismissError) { Text(words.text("关闭", "Dismiss")) }
                     }
                 }
-                if (state.schedule == null) {
+                if (state.schedule?.days.isNullOrEmpty()) {
                     Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                        Text(if (state.busy) words.text("正在加载课表…", "Loading timetable…") else words.text("暂无课表，请点击刷新。", "No timetable. Tap Refresh."), color = SoftInk)
+                        val prompt = when {
+                            directAttendance && state.busy -> words.text("正在读取 iClass 排课…", "Loading iClass classes…")
+                            directAttendance && state.error != null -> words.text("请查看底部日志，或点击刷新。", "See the activity log or tap Refresh.")
+                            directAttendance -> words.text("暂无 iClass 排课，请点击刷新。", "No iClass classes. Tap Refresh.")
+                            state.busy -> words.text("正在加载课表…", "Loading timetable…")
+                            !state.schedule?.academic?.terms.isNullOrEmpty() ->
+                                words.text("请展开正式课表并选择教务学期。", "Expand Official timetable and choose a term.")
+                            else -> words.text("暂无课表，请点击刷新。", "No timetable. Tap Refresh.")
+                        }
+                        Text(prompt, color = SoftInk)
+                    }
+                } else if (directAttendance) {
+                    key(state.week) {
+                        DirectAttendanceList(state, actions, words, Modifier.weight(1f)) { date, course ->
+                            selectedKey = TimetableLayout.key(date, course)
+                        }
                     }
                 } else {
                     WeeklyGrid(state, words, Modifier.weight(1f), gridVertical, onCourse = { date, course -> selectedKey = TimetableLayout.key(date, course) },
@@ -127,7 +144,7 @@ internal fun TimetableContent(state: AssistantUiState, actions: AssistantActions
             }
         }
     }
-    if (selected == null && overlaps.isNotEmpty()) {
+    if (!directAttendance && selected == null && overlaps.isNotEmpty()) {
         AlertDialog(
             onDismissRequest = { overlapKeys = emptyList() },
             title = { Text(words.text("这个时段有多门课程", "Overlapping classes")) },
@@ -154,6 +171,7 @@ internal fun TimetableContent(state: AssistantUiState, actions: AssistantActions
 @Composable
 private fun TimetableHeader(state: AssistantUiState, actions: AssistantActions, words: UiWords) {
     var weekMenu by remember { mutableStateOf(false) }
+    val directAttendance = state.attendanceMode == AttendanceMode.ICLASS
     val weeks = state.schedule?.weeks?.map { it.number }?.distinct()?.takeIf { it.isNotEmpty() } ?: (1..18).toList()
     val weekIndex = weeks.indexOf(state.week)
     val previous = weeks.getOrNull(weekIndex - 1)
@@ -163,11 +181,22 @@ private fun TimetableHeader(state: AssistantUiState, actions: AssistantActions, 
         Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(words.text("我的课表", "My timetable"), fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Ink)
-                    Text(words.studentLabel(resolvedStudentType(state)) + words.text(" · 点击课程查看详情", " · Tap a class for details"),
+                    Text(if (directAttendance) words.text("iClass 签到", "iClass attendance") else words.text("我的课表", "My timetable"),
+                        fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Ink)
+                    Text(if (directAttendance) words.text("仅显示 iClass 排课", "Showing classes from iClass")
+                        else words.studentLabel(resolvedStudentType(state)) + words.text(" · 点击课程查看详情", " · Tap a class for details"),
                         modifier = Modifier.testTag("timetable_identity"), fontSize = 11.sp, color = SoftInk)
                 }
                 TextButton(onClick = actions.language, enabled = !state.busy, modifier = Modifier.testTag("language"), contentPadding = PaddingValues(8.dp)) { Text(words.text("EN", "中")) }
+                TextButton(
+                    onClick = { actions.attendanceMode(if (directAttendance) AttendanceMode.TIMETABLE else AttendanceMode.ICLASS) },
+                    enabled = !state.busy,
+                    modifier = Modifier.testTag("attendance_mode_switch").semantics {
+                        contentDescription = if (directAttendance) words.text("切换到课表签到", "Switch to timetable attendance")
+                        else words.text("切换到 iClass 签到", "Switch to iClass attendance")
+                    },
+                    contentPadding = PaddingValues(6.dp),
+                ) { Text(words.text("切换", "Switch"), fontSize = 12.sp) }
                 TextButton(onClick = actions.logout, enabled = !state.busy, modifier = Modifier.testTag("logout"), contentPadding = PaddingValues(6.dp)) { Text(words.text("退出", "Sign out"), fontSize = 12.sp) }
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -191,6 +220,68 @@ private fun TimetableHeader(state: AssistantUiState, actions: AssistantActions, 
         }
     }
 }
+
+@Composable
+private fun DirectAttendanceList(
+    state: AssistantUiState,
+    actions: AssistantActions,
+    words: UiWords,
+    modifier: Modifier,
+    onCourse: (LocalDate, Course) -> Unit,
+) {
+    LazyColumn(
+        modifier.fillMaxWidth().testTag("iclass_attendance_list"),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        items(state.schedule?.days.orEmpty(), key = { it.date }) { day ->
+            Surface(
+                Modifier.fillMaxWidth().testTag("iclass_day_${day.date}"),
+                shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, Line),
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${day.date} · ${words.weekday(day.date)}", fontWeight = FontWeight.Bold, color = Ink)
+                    when {
+                        day.failed -> Text(words.text("当天排课读取失败，请刷新重试。", "Could not load classes for this date. Tap Refresh."),
+                            Modifier.testTag("failed_day_${day.date}"), color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                        day.courses.isEmpty() -> Text(words.text("当天没有 iClass 排课", "No iClass classes for this date"),
+                            Modifier.testTag("empty_day_${day.date}"), color = SoftInk, fontSize = 12.sp)
+                        else -> day.courses.forEach { course ->
+                            val canAttend = canSignDirectly(course)
+                            HorizontalDivider(color = Line)
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Column(
+                                    Modifier.weight(1f).clickable { onCourse(day.date, course) }
+                                        .padding(vertical = 6.dp).testTag("course_${course.id}"),
+                                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                                ) {
+                                    Text(course.courseName, fontWeight = FontWeight.SemiBold, color = Ink)
+                                    Text(timeRange(course), fontSize = 12.sp, color = DeepBlue)
+                                    Text(location(course, words), fontSize = 12.sp, color = SoftInk)
+                                }
+                                Button(
+                                    onClick = { actions.sign(course) }, enabled = !state.busy && canAttend && !course.signed,
+                                    modifier = Modifier.testTag("sign_${course.id}"), shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp),
+                                ) {
+                                    Text(when {
+                                        course.signed -> words.text("已签到", "Signed")
+                                        !canAttend -> words.text("暂不可签到", "Unavailable")
+                                        else -> words.text("签到", "Sign")
+                                    }, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun canSignDirectly(course: Course) =
+    course.attendanceAvailable && !course.attendanceNotRequired && course.realIds.isNotEmpty() && course.attendanceSessions.isEmpty()
 
 @Composable
 private fun WeeklyGrid(state: AssistantUiState, words: UiWords, modifier: Modifier, vertical: ScrollState, onCourse: (LocalDate?, Course) -> Unit, onOverlap: (LocalDate, List<Course>) -> Unit) {
@@ -297,11 +388,15 @@ private fun WeeklyGrid(state: AssistantUiState, words: UiWords, modifier: Modifi
 
 @Composable
 private fun CourseDetail(date: LocalDate?, course: Course, state: AssistantUiState, actions: AssistantActions, words: UiWords, back: () -> Unit, modifier: Modifier) {
+    val directAttendance = state.attendanceMode == AttendanceMode.ICLASS
     val hasTime = date != null && TimetableLayout.time(course.classBeginTime) != null && TimetableLayout.time(course.classEndTime) != null
-    val canAttend = course.attendanceAvailable && hasTime
+    val canAttend = if (directAttendance) canSignDirectly(course) else course.attendanceAvailable && hasTime
     Column(modifier.fillMaxSize().testTag("course_detail")) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = back, modifier = Modifier.testTag("detail_back").semantics { contentDescription = words.text("返回课表", "Back to timetable") }) { Text("‹", fontSize = 30.sp) }
+            TextButton(onClick = back, modifier = Modifier.testTag("detail_back").semantics {
+                contentDescription = if (directAttendance) words.text("返回签到列表", "Back to attendance list")
+                    else words.text("返回课表", "Back to timetable")
+            }) { Text("‹", fontSize = 30.sp) }
             Text(words.text("课程详情", "Class details"), Modifier.weight(1f), textAlign = TextAlign.Center, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
             TextButton(onClick = actions.refresh, enabled = !state.busy, modifier = Modifier.testTag("detail_refresh")) { Text(words.text("刷新", "Refresh"), fontSize = 12.sp) }
         }
@@ -320,9 +415,11 @@ private fun CourseDetail(date: LocalDate?, course: Course, state: AssistantUiSta
                         Text(words.text("基本信息", "Basic information"), fontSize = 19.sp, fontWeight = FontWeight.Bold)
                         DetailRow(words.text("上课日期", "Date"), date?.let { "$it · ${words.weekday(it)}" } ?: words.text("未安排时间", "Time not scheduled"))
                         DetailRow(words.text("上课时间", "Time"), timeRange(course))
-                        val sections = TimetableLayout.periods(state.schedule)
-                        val span = TimetableLayout.span(course, sections)
-                        DetailRow(words.text("节次", "Periods"), span?.let { words.text("第 ${sections[it.first].number}–${sections[it.last].number} 节", "${sections[it.first].number}–${sections[it.last].number}") } ?: words.text("非标准节次 / 时间待确认", "Non-standard / unconfirmed time"))
+                        if (!directAttendance) {
+                            val sections = TimetableLayout.periods(state.schedule)
+                            val span = TimetableLayout.span(course, sections)
+                            DetailRow(words.text("节次", "Periods"), span?.let { words.text("第 ${sections[it.first].number}–${sections[it.last].number} 节", "${sections[it.first].number}–${sections[it.last].number}") } ?: words.text("非标准节次 / 时间待确认", "Non-standard / unconfirmed time"))
+                        }
                         DetailRow(words.text("上课地点", "Location"), location(course, words))
                         DetailRow(words.text("任课教师", "Teacher"), course.teachers.filter(String::isNotBlank).joinToString(" · ").ifBlank { words.text("待定", "TBA") })
 
@@ -338,10 +435,15 @@ private fun CourseDetail(date: LocalDate?, course: Course, state: AssistantUiSta
                             Text(words.text("课程签到", "Attendance"), fontWeight = FontWeight.Bold, fontSize = 17.sp)
                             Text(if (course.attendanceNotRequired) words.text("✓ 无需签到", "✓ Not required") else if (!canAttend) words.text("暂不可用", "Unavailable") else if (course.attendanceSessions.size > 1) course.attendanceProgress else if (course.signed) words.text("已签到", "Signed") else words.text("未签到", "Pending"), color = Blue)
                         }
-                        if (!official) Text(words.text("教务待核对 · 请确认仍在正式课表中", "Unverified · Check your official timetable"),
+                        if (!directAttendance && !official) Text(words.text("教务待核对 · 请确认仍在正式课表中", "Unverified · Check your official timetable"),
                             Modifier.testTag("academic_pending_${course.id}"), fontSize = 12.sp, color = SoftInk)
                         if (!canAttend && !course.attendanceNotRequired) {
-                            Text(if (!hasTime) words.text("课程日期或时间未确认，暂不可签到", "The class date or time is unconfirmed. Attendance is unavailable.") else if (official) words.text("未找到对应的 iClass 排课，暂不可签到", "No corresponding iClass class was found. Attendance is unavailable.") else words.text("完成正式课表核对前暂不可签到", "Attendance is unavailable until the official timetable is checked."),
+                            Text(when {
+                                directAttendance -> words.text("该条 iClass 排课暂不可签到", "Attendance is unavailable for this iClass class.")
+                                !hasTime -> words.text("课程日期或时间未确认，暂不可签到", "The class date or time is unconfirmed. Attendance is unavailable.")
+                                official -> words.text("未找到对应的 iClass 排课，暂不可签到", "No corresponding iClass class was found. Attendance is unavailable.")
+                                else -> words.text("完成正式课表核对前暂不可签到", "Attendance is unavailable until the official timetable is checked.")
+                            },
                                 Modifier.testTag("attendance_unavailable_${course.id}"), fontSize = 13.sp, color = SoftInk)
                         }
                         Text(words.text("请根据实际出勤情况操作。\n结果以智慧北航APP“智慧教室”为准。", "Submit for your actual attendance.\nCheck the Smart Classroom records in the Smart BUAA app for the result."), fontSize = 12.sp, color = SoftInk)

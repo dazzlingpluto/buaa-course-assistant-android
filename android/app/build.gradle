@@ -10,8 +10,8 @@ android {
         applicationId 'org.buaacourse.assistant'
         minSdk 24
         targetSdk 36
-        versionCode 24020
-        versionName '2.3.1'
+        versionCode 24026
+        versionName '2.3.2'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
     compileOptions {

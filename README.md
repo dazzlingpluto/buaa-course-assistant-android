@@ -1,11 +1,11 @@
 # BUAA Course Assistant · 北航课程助手
 
-面向 Android 手机的北航课程助手，支持查询本科生和研究生的教务周课表、查看课程详情，以及手动完成关联的 iClass 签到。
+面向 Android 手机的北航课程助手，支持查看本科生和研究生的教务周课表，以及通过课表或 iClass 列表手动签到。
 
 ## 安装与更新
 
-1. 在 Android 7.0 或更高版本的手机上，打开 [v2.3.1 发布页](https://github.com/dazzlingpluto/buaa-course-assistant-android/releases/tag/v2.3.1)。
-2. 在发布页的 **Assets** 中下载 `buaa-course-assistant-v2.3.1.apk`。下载完成后打开 APK，按系统提示安装。若系统提示需要授权，允许当前浏览器或文件管理器安装应用后再继续。
+1. 在 Android 7.0 或更高版本的手机上，打开 [最新发布页](https://github.com/dazzlingpluto/buaa-course-assistant-android/releases/latest)。
+2. 在发布页的 **Assets** 中下载 APK。下载完成后打开 APK，按系统提示安装。若系统提示需要授权，允许当前浏览器或文件管理器安装应用后再继续。
 3. 安装后打开「北航课程助手」。已有版本使用相同签名时，可以直接覆盖安装并保留应用数据。
 
 更新应用时，从 [GitHub Releases](https://github.com/dazzlingpluto/buaa-course-assistant-android/releases/latest) 下载 APK 并覆盖安装。
@@ -15,6 +15,7 @@
 1. **选择网络并登录**。使用校园 Wi-Fi 时选「校园直连」，使用移动数据或校外 Wi-Fi 时选「校外网络」。输入北航统一身份认证学号和密码。若出现图片验证码，输入后继续登录，点击图片可换一张。
 2. **查看课表**。应用会自动识别本科生或研究生的课表入口。登录后可以选择学期、切换周次，点「本周」返回当前周。点击课程卡片查看时间、地点和签到状态。
 3. **手动签到**。进入课程详情，在对应的 iClass 场次点「签到」。同一门课有多个场次时，分别操作并查看进度。显示「✓ 无需签到」时，该课程本周无关联的 iClass 排课。若签到暂不可用，可点「刷新」重试。签到结果可在智慧北航 App 的「智慧教室」核对。
+4. **切换签到模式**。默认使用课表签到。点右上角「切换」可直接读取 iClass 签到列表，正式课表加载失败时也能使用。再次点击即可返回课表签到。
 
 ## 记住密码与自动登录
 

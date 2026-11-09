@@ -23,8 +23,13 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.time.Clock
+import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
+import java.time.temporal.TemporalAdjusters
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -37,6 +42,7 @@ import kotlin.coroutines.resumeWithException
 class IclassRepository(
     private val logger: (String, String) -> Unit = { _, _ -> },
     private val baseClient: OkHttpClient = defaultClient(),
+    private val schoolClock: Clock = Clock.system(ZoneId.of("Asia/Shanghai")),
 ) : CourseRepository {
     private val lock = Any()
     private var active: NetworkSession? = null
@@ -167,7 +173,10 @@ class IclassRepository(
         follow(session, request(schoolUrl(session, launchUrl.toString())))
 
         val statusUrl = schoolUrl(session, "https://uc.buaa.edu.cn/api/uc/status")
-        val statusRequest = request(statusUrl).newBuilder().header("X-Requested-With", "XMLHttpRequest").build()
+        val statusRequest = request(statusUrl).newBuilder()
+            .header("Accept", "application/json, text/javascript, */*; q=0.01")
+            .header("X-Requested-With", "XMLHttpRequest")
+            .build()
         val response = follow(session, statusRequest)
         if (response.url.newBuilder().query(null).fragment(null).build() != statusUrl) {
             throw IclassException("统一认证会话尚未建立，请重新登录")
@@ -211,7 +220,7 @@ class IclassRepository(
     }
 
     override suspend fun loadWeek(week: Int, semesterStart: LocalDate): WeekSchedule {
-        if (week !in 0..60) throw IclassException("请选择学校返回的有效周次")
+        if (week !in 0..MAX_WEEKS) throw IclassException("请选择学校返回的有效周次")
         val (session, _) = authenticated()
         log("正在读取学校正式课表")
         val preferred = session.studentType
@@ -234,6 +243,35 @@ class IclassRepository(
         throw IclassException("学校正式课表读取失败（${errors.joinToString("；")}）")
     }
 
+    override suspend fun loadDirectAttendance(week: Int, semesterStart: LocalDate): WeekSchedule {
+        if (week !in 0..MAX_WEEKS) throw IclassException("请选择有效周次")
+        val (session, _) = authenticated()
+        val today = LocalDate.now(schoolClock)
+        val monday = TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)
+        val currentStart = today.with(monday)
+        val suppliedStart = semesterStart.with(monday)
+        val currentOffset = ChronoUnit.WEEKS.between(suppliedStart, currentStart)
+        // Keep the current week accessible when the configured academic year is out of range.
+        val start = if (week == 0 && currentOffset !in 0L until MAX_WEEKS.toLong()) currentStart else suppliedStart
+        val weeks = (1..MAX_WEEKS).map { number ->
+            val first = start.plusWeeks(number.toLong() - 1)
+            AcademicWeek(number, first, first.plusDays(6), current = first == currentStart)
+        }
+        val selected = if (week == 0) weeks.first { it.current } else weeks[week - 1]
+        log("正在直接读取 iClass 签到课程")
+        val days = withTimeoutOrNull(15_000) {
+            if (session.sessionId.isBlank() || session.iclassUserId.isBlank()) activateIclass(session)
+            loadIclassDays(session, selected.start)
+        }
+        ensureSession(session)
+        if (days == null || days.all { it.failed }) throw IclassException("iClass 签到课程读取失败，请稍后刷新重试")
+        return WeekSchedule(selected.number, start, days.map { day ->
+            day.copy(courses = day.courses.map { course ->
+                course.copy(attendanceAvailable = course.realIds.isNotEmpty()).applyAttendance(emptySet())
+            })
+        }, studentType = session.studentType, weeks = weeks)
+    }
+
     private suspend fun detectPortal(session: NetworkSession): AcademicAccessProtocol.Portal {
         val endpoint = schoolUrl(session, BYXT_PROBE)
         val probe = request(endpoint).newBuilder().header("X-Requested-With", "XMLHttpRequest").build()
@@ -252,7 +290,7 @@ class IclassRepository(
         return try {
             val raw = withTimeoutOrNull(15_000) {
                 if (session.sessionId.isBlank() || session.iclassUserId.isBlank()) activateIclass(session)
-                loadIclassWeek(session, schedule)
+                WeekSchedule(schedule.week, schedule.semesterStart, loadIclassDays(session, schedule.days.first().date))
             }
             ensureSession(session)
             if (raw == null || raw.days.all { it.failed }) {
@@ -267,9 +305,8 @@ class IclassRepository(
         }
     }
 
-    private suspend fun loadIclassWeek(session: NetworkSession, official: WeekSchedule): WeekSchedule = coroutineScope {
+    private suspend fun loadIclassDays(session: NetworkSession, start: LocalDate): List<DaySchedule> = coroutineScope {
         val userId = session.iclassUserId
-        val start = official.days.first().date
         val days = (0L..6L).map { offset ->
             async {
                 val date = start.plusDays(offset)
@@ -293,7 +330,7 @@ class IclassRepository(
             }
         }.awaitAll()
         ensureSession(session)
-        WeekSchedule(official.week, official.semesterStart, days)
+        days
     }
 
     override fun selectAcademicTerm(code: String) {
@@ -344,10 +381,14 @@ class IclassRepository(
             }
             stage("研究生学期列表") { AcademicTimetableProtocol.parseGraduateTerms(academicQuery(session, type, GSMIS_TERMS, emptyMap())) }
         }
-        val term = session.academicTermCode?.let { code -> terms.find { it.code == code }
-            ?: throw IclassException("学校未返回已选择的学期，请退出后重新登录") }
-            ?: terms.firstOrNull { it.selected } ?: terms.firstOrNull()
-            ?: throw IclassException("学校未返回可查询学期")
+        if (terms.isEmpty()) throw IclassException("学校未返回可查询学期")
+        val requestedCode = session.academicTermCode
+        val term = when {
+            requestedCode != null -> terms.find { it.code == requestedCode }
+            undergraduate -> terms.firstOrNull { it.selected } ?: terms.first()
+            else -> GraduateTimetableParser.currentTerm(terms, defaultStart)
+        }
+        if (term == null) return academicTermSelection(session, type, terms, defaultStart)
         var graduateBody: String? = null
         val calendar = if (undergraduate) {
             stage("本科周次列表") { AcademicTimetableProtocol.parseUndergraduateWeeks(
@@ -358,10 +399,12 @@ class IclassRepository(
             stage("研究生校历") { AcademicTimetableProtocol.graduateWeeks(checkNotNull(graduateBody), term, defaultStart) }
         }
         val weeks = calendar.sortedBy { it.number }.ifEmpty {
-            if (GsmisProtocol.chooseTerm(listOf(term), defaultStart, null) == null) throw IclassException("该学期尚未返回可查询周次")
+            val currentTerm = if (undergraduate) GsmisProtocol.chooseTerm(listOf(term), defaultStart, null)
+                else GraduateTimetableParser.currentTerm(terms, defaultStart)
+            if (term != currentTerm) return academicTermSelection(session, type, terms, defaultStart, term)
             listOf(AcademicWeek(1, defaultStart, defaultStart.plusDays(6)))
         }
-        val today = LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"))
+        val today = LocalDate.now(schoolClock)
         val selected = if (requestedWeek == 0) weeks.firstOrNull { today >= it.start && today <= it.end }
             ?: weeks.firstOrNull { it.current } ?: weeks.first()
             else weeks.find { it.number == requestedWeek } ?: throw IclassException("学校未返回第 $requestedWeek 周，请选择有效周次")
@@ -381,6 +424,20 @@ class IclassRepository(
         synchronized(lock) { ensureSession(session); session.studentType = type; session.academicTerms = terms }
         log("${if (undergraduate) "本科生" else "研究生"}正式课表已加载，共 ${result.total} 门课程", "success")
         return result
+    }
+
+    private fun academicTermSelection(
+        session: NetworkSession,
+        type: StudentType,
+        terms: List<AcademicTerm>,
+        start: LocalDate,
+        unavailable: AcademicTerm? = null,
+    ): WeekSchedule {
+        synchronized(lock) { ensureSession(session); session.studentType = type; session.academicTerms = terms }
+        val comparison = if (unavailable == null) AcademicComparison(AcademicStatus.SELECT_TERM, terms)
+            else AcademicComparison(AcademicStatus.UNAVAILABLE, terms, unavailable.code, unavailable.name,
+                message = "该学期尚未返回可查询周次，可选择其他学期或稍后刷新。")
+        return WeekSchedule(1, start, emptyList(), academic = comparison, studentType = type)
     }
 
     private fun lessonSections(lessons: List<AcademicLesson>): List<AcademicPeriod> {
@@ -588,6 +645,7 @@ class IclassRepository(
         private const val GSMIS_TERMS = "https://gsmis.buaa.edu.cn/gsapp/sys/wdkbapp/modules/xskcb/kfdxnxqcx.do"
         private const val GSMIS_SCHEDULE = "https://gsmis.buaa.edu.cn/gsapp/sys/wdkbapp/bykb/loadXskbData.do"
         private const val MAX_RESPONSE_BYTES = 4L * 1024 * 1024
+        private const val MAX_WEEKS = 60
         private val REDIRECTS = setOf(301, 302, 303, 307, 308)
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)

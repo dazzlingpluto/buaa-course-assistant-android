@@ -29,6 +29,15 @@ object GraduateTimetableParser {
     private val termCode = Regex("[0-9]{4}[123]")
     private val schoolZone = ZoneId.of("Asia/Shanghai")
 
+    fun currentTerm(terms: List<AcademicTerm>, semesterStart: LocalDate): AcademicTerm? {
+        val autumn = semesterStart.monthValue >= 7
+        val academicYear = if (autumn) semesterStart.year else semesterStart.year - 1
+        // GSMIS encodes the academic year's starting year followed by the semester number.
+        val code = "$academicYear${if (autumn) 1 else 2}"
+        return terms.firstOrNull { it.code == code }
+            ?: GsmisProtocol.chooseTerm(terms, semesterStart, null)
+    }
+
     fun parseTerms(body: String): List<AcademicTerm> {
         val root = readObject(body, INVALID_TERMS)
         val data = root.optJSONObject("datas")?.optJSONObject("kfdxnxqcx")
@@ -49,8 +58,8 @@ object GraduateTimetableParser {
             val previous = namesByCode.putIfAbsent(code, name)
             if (previous != null && previous != name) throw IclassException(INVALID_TERMS)
         }
-        return namesByCode.entries.sortedByDescending { it.key }.mapIndexed { index, (code, name) ->
-            AcademicTerm(code, name, selected = index == 0)
+        return namesByCode.entries.sortedByDescending { it.key }.map { (code, name) ->
+            AcademicTerm(code, name)
         }
     }
 
@@ -162,7 +171,7 @@ object GraduateTimetableParser {
 
         val first = row.positiveNumber("KSJCDM")
         val last = row.positiveNumber("JSJCDM")
-        val scheme = row.requiredCode("JCFADM")
+        val scheme = row.optionalCode("JCFADM") ?: schemes.keys.singleOrNull() ?: invalid()
         val periods = schemes[scheme] ?: invalid()
         val coveredPeriods = periods.keys.count { it in first..last }
         if (last < first || coveredPeriods.toLong() != last.toLong() - first + 1) invalid()

@@ -4,6 +4,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 
 enum class NetworkMode { DIRECT, VPN }
+enum class AttendanceMode { TIMETABLE, ICLASS }
 enum class StudentType { AUTO, UNDERGRADUATE, GRADUATE }
 enum class AppLanguage { ZH, EN }
 enum class SignOutcome { SUCCESS, SKIPPED, FAILED }
@@ -103,6 +104,8 @@ interface CourseRepository {
     suspend fun loginWithCaptcha(username: String, password: String, mode: NetworkMode, captcha: String): UserSession = login(username, password, mode)
     suspend fun refreshLoginCaptcha(): LoginCaptcha = throw IclassException("当前登录无需验证码")
     suspend fun loadWeek(week: Int, semesterStart: LocalDate): WeekSchedule
+    suspend fun loadDirectAttendance(week: Int, semesterStart: LocalDate): WeekSchedule =
+        throw IclassException("iClass 签到暂不可用")
     suspend fun linkAttendance(schedule: WeekSchedule): WeekSchedule = schedule
     suspend fun signCourses(courses: List<Course>): SignSummary
     fun selectAcademicTerm(code: String) {}
@@ -120,6 +123,7 @@ data class AssistantUiState(
     val password: String = "",
     val mode: NetworkMode = NetworkMode.DIRECT,
     val studentType: StudentType = StudentType.AUTO,
+    val attendanceMode: AttendanceMode = AttendanceMode.TIMETABLE,
     val autoLogin: Boolean = false,
     val language: AppLanguage = AppLanguage.ZH,
     val semesterStart: LocalDate = LocalDate.of(2026, 9, 7),

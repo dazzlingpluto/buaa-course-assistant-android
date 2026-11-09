@@ -210,12 +210,17 @@ class AssistantScreenTest {
         assertEquals(2, calls)
     }
 
-    @Test fun failedAutoLoginStillAllowsManualRetryAndPasswordVisibility() {
+    @Test fun failedAutoLoginAppearsOnlyInTheBottomLogAndAllowsRetry() {
         var retries = 0
+        val error = "登录失败，请重试"
         compose.setContent {
             AssistantContent(AssistantUiState(username = "demo", password = "demo-password", remember = true,
-                autoLogin = true, busy = false, error = "登录失败，请重试"), AssistantActions(login = { retries++ }))
+                autoLogin = true, busy = false, error = error, logs = listOf(AppLog(error, "error"))),
+                AssistantActions(login = { retries++ }))
         }
+        compose.onNodeWithTag("log_toggle").assertIsDisplayed().assertTextContains(error, substring = true)
+        compose.onNodeWithTag("error_message").assertDoesNotExist()
+        compose.onAllNodesWithText(error, substring = true).assertCountEquals(1)
         compose.onNodeWithTag("show_password").performScrollTo().performClick().assertTextContains("隐藏")
         compose.onNodeWithTag("show_password").performClick().assertTextContains("显示")
         compose.onNodeWithTag("login").performScrollTo().assertIsEnabled().performClick()
@@ -230,6 +235,48 @@ class AssistantScreenTest {
         compose.onNodeWithTag("login").assertIsNotEnabled()
         compose.runOnIdle { state.value = state.value.copy(password = "password") }
         compose.onNodeWithTag("login").assertIsEnabled()
+    }
+
+    @Test fun failedTimetableCanSwitchToDirectAttendanceAndBack() {
+        val official = loggedIn()
+        val state = mutableStateOf(official.copy(schedule = null, error = "教务读取失败"))
+        var signed: Course? = null
+        compose.setContent {
+            AssistantContent(state.value, AssistantActions(
+                attendanceMode = { mode ->
+                    state.value = official.copy(
+                        attendanceMode = mode,
+                        schedule = if (mode == AttendanceMode.ICLASS) official.schedule?.copy(academic = null) else official.schedule,
+                    )
+                },
+                sign = { signed = it },
+            ))
+        }
+
+        val switchButton = compose.onNodeWithTag("attendance_mode_switch").assertIsDisplayed().assertTextEquals("切换")
+        val switchBounds = switchButton.fetchSemanticsNode().boundsInRoot
+        val languageBounds = compose.onNodeWithTag("language").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val logoutBounds = compose.onNodeWithTag("logout").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue(languageBounds.center.x < switchBounds.center.x && switchBounds.center.x < logoutBounds.center.x)
+        assertTrue(switchBounds.center.y in languageBounds.top..languageBounds.bottom)
+        assertTrue(switchBounds.center.y in logoutBounds.top..logoutBounds.bottom)
+        switchButton.performClick()
+        compose.onNodeWithTag("weekly_grid").assertDoesNotExist()
+        compose.onNodeWithTag("academic_toggle").assertDoesNotExist()
+        compose.onNodeWithTag("iclass_day_2026-09-07").assertIsDisplayed()
+        compose.onNodeWithTag("sign_done").assertIsNotEnabled()
+        compose.onNodeWithTag("sign_pending").assertIsEnabled().performClick()
+        assertEquals("pending", signed?.id)
+        compose.onNodeWithTag("course_pending").performClick()
+        compose.onNodeWithTag("course_detail").assertIsDisplayed()
+        compose.onNodeWithTag("academic_pending_pending").assertDoesNotExist()
+        compose.onNodeWithTag("sign_pending").performScrollTo().assertIsEnabled()
+        compose.onNodeWithTag("detail_back").performClick()
+        switchButton.assertTextEquals("切换").performClick()
+        compose.onNodeWithTag("weekly_grid").assertIsDisplayed()
+        compose.onNodeWithTag("iclass_attendance_list").assertDoesNotExist()
+        compose.runOnIdle { state.value = state.value.copy(language = AppLanguage.EN) }
+        switchButton.assertTextEquals("Switch")
     }
 
     @Test fun weekNavigationUsesLimitsAndSelectedWeek() {
