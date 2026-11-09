@@ -27,9 +27,13 @@
 
 以下截图使用演示数据。
 
-| 登录页 | 周课表 | 课程详情 |
-| --- | --- | --- |
-| ![登录页](docs/native-login.png) | ![周课表](docs/native-courses.png) | ![课程详情](docs/native-course-detail.png) |
+| 课表签到 | iClass 签到 |
+| --- | --- |
+| ![周课表，右上角有切换按钮](docs/native-courses.png) | ![切换后的 iClass 签到列表](docs/native-iclass.png) |
+
+| 登录页 | 课程详情 |
+| --- | --- |
+| ![登录页](docs/native-login.png) | ![课程详情](docs/native-course-detail.png) |
 
 ## 免责声明
 

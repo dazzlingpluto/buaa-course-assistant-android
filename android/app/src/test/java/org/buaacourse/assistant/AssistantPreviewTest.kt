@@ -3,6 +3,8 @@ package org.buaacourse.assistant
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -55,16 +57,32 @@ class AssistantPreviewTest {
         capture("native-courses")
     }
 
+    @Test fun captureDirectAttendancePreview() {
+        val official = coursePreviewState()
+        val direct = checkNotNull(official.schedule).let { schedule ->
+            WeekSchedule(schedule.week, schedule.semesterStart, schedule.days.map { day ->
+                day.copy(courses = day.courses.filter { it.attendanceAvailable })
+            })
+        }
+        val state = mutableStateOf(official)
+        compose.setContent {
+            AssistantContent(state.value, AssistantActions(attendanceMode = { mode ->
+                state.value = if (mode == AttendanceMode.TIMETABLE) official else official.copy(
+                    attendanceMode = mode,
+                    schedule = direct,
+                    logs = listOf(AppLog("演示 iClass 签到列表已加载。", "success", LocalTime.of(9, 0))),
+                )
+            }))
+        }
+        compose.onNodeWithTag("attendance_mode_switch").performClick()
+        compose.onNodeWithTag("iclass_attendance_list").assertIsDisplayed()
+        capture("native-iclass")
+    }
+
     @Test fun captureDetailPreview() {
-        val base = coursePreviewState()
-        val schedule = base.schedule!!
-        val updated = schedule.copy(days = schedule.days.map { day -> day.copy(courses = day.courses.map { c ->
-            if (c.id != "demo-4") c else c.copy(signed = true, attendanceSessions = listOf(
-                c.copy(id = "session-one", classBeginTime = "08:50", classEndTime = "10:35", scheduleIds = listOf("session-one"), signed = true),
-                c.copy(id = "session-two", classBeginTime = "10:40", classEndTime = "12:15", scheduleIds = listOf("session-two"), signed = true)))
-        }) })
-        compose.setContent { AssistantContent(base.copy(schedule = updated)) }
+        compose.setContent { AssistantContent(coursePreviewState()) }
         compose.onNodeWithTag("course_demo-4").performClick()
+        compose.onNodeWithTag("sign_demo-4").assertIsDisplayed()
         capture("native-course-detail")
     }
 
@@ -115,7 +133,10 @@ class AssistantPreviewTest {
             Course("demo-$id", name, courseNum = "DEMO-${100 + id}", classBeginTime = begin, classEndTime = end,
                 classroomName = room, teachers = listOf("示例教师"), signed = signed, classCode = "DEMO-${100 + id}-01")
         val byDay = mapOf(
-            0 to listOf(demo(1, "高等数学", "09:50", "11:25", "星桥楼 6-107").copy(attendanceNotRequired = true, attendanceAvailable = false)),
+            0 to listOf(
+                demo(1, "高等数学", "09:50", "11:25", "星桥楼 6-107").copy(attendanceNotRequired = true, attendanceAvailable = false),
+                demo(10, "大学物理", "14:00", "15:35", "松石楼 2-208", true),
+            ),
             1 to listOf(demo(4, "理论物理", "08:50", "12:15", "松石楼 2-208"), demo(6, "程序设计基础", "14:00", "15:35", "云岸楼 1-104")),
             2 to listOf(demo(2, "线性代数", "08:00", "09:35", "星桥楼 3-206", true), demo(7, "大学英语", "15:50", "17:25", "云岸楼 4-312")),
             3 to listOf(demo(3, "概率论与数理统计", "14:00", "16:35", "松石楼 5-103")),
