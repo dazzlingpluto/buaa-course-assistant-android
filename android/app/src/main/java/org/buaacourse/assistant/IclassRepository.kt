@@ -92,6 +92,7 @@ class IclassRepository(
 
     private data class Page(val url: HttpUrl, val code: Int, val location: String?, val body: String, val bytes: ByteArray = byteArrayOf())
     private data class AuthenticatedSession(val session: NetworkSession, val userId: String)
+    private class HttpAccessDenied : IclassException("账号访问被拒绝，请重新登录或检查账号权限")
 
     override suspend fun login(username: String, password: String, mode: NetworkMode): UserSession = loginWithCaptcha(username, password, mode, "")
 
@@ -273,10 +274,9 @@ class IclassRepository(
     }
 
     private suspend fun detectPortal(session: NetworkSession): AcademicAccessProtocol.Portal {
-        val endpoint = schoolUrl(session, BYXT_PROBE)
-        val probe = request(endpoint).newBuilder().header("X-Requested-With", "XMLHttpRequest").build()
         return try {
-            val response = follow(session, probe)
+            // An ordinary navigation lets BYXT redirect to CAS before we send AJAX requests.
+            val response = follow(session, request(schoolUrl(session, BYXT_PROBE)))
             AcademicAccessProtocol.portal(response.code, response.url, response.body)
         } catch (_: IclassException) {
             ensureSession(session)
@@ -360,6 +360,9 @@ class IclassRepository(
         val query = request(endpoint).newBuilder()
             .header("Referer", schoolUrl(session, entryPoint).toString())
             .header("X-Requested-With", "XMLHttpRequest")
+        if (type == StudentType.UNDERGRADUATE) {
+            query.header("Accept", "application/json, text/javascript, */*; q=0.01")
+        }
         if (fields != null) {
             val form = FormBody.Builder()
             for ((name, value) in fields) form.add(name, value)
@@ -373,7 +376,19 @@ class IclassRepository(
     private suspend fun officialWeek(session: NetworkSession, type: StudentType, requestedWeek: Int, defaultStart: LocalDate): WeekSchedule {
         val undergraduate = type == StudentType.UNDERGRADUATE
         val terms = if (undergraduate) {
-            stage("本科学期列表") { AcademicTimetableProtocol.parseUndergraduateTerms(academicQuery(session, type, BYXT_TERMS)) }
+            stage("本科学期列表") {
+                val body = try {
+                    academicQuery(session, type, BYXT_TERMS)
+                } catch (denied: HttpAccessDenied) {
+                    val home = follow(session, request(schoolUrl(session, BYXT_REFERER)))
+                    when (AcademicAccessProtocol.portal(home.code, home.url, home.body)) {
+                        AcademicAccessProtocol.Portal.SIGN_IN -> throw IclassException("本科教务会话未建立，请重新登录")
+                        AcademicAccessProtocol.Portal.GRADUATE -> throw denied
+                        else -> academicQuery(session, type, BYXT_TERMS)
+                    }
+                }
+                AcademicTimetableProtocol.parseUndergraduateTerms(body)
+            }
         } else {
             stage("研究生教务登录") {
                 val home = follow(session, request(schoolUrl(session, GSMIS_HOME)))
@@ -619,8 +634,8 @@ class IclassRepository(
     }
 
     private fun requireSuccess(code: Int) {
-        if (code !in 200..299) throw IclassException(
-            if (code in setOf(401, 403)) "账号访问被拒绝，请重新登录或检查账号权限" else "学校服务请求失败（HTTP $code）")
+        if (code == 401 || code == 403) throw HttpAccessDenied()
+        if (code !in 200..299) throw IclassException("学校服务请求失败（HTTP $code）")
     }
 
     private fun safeError(error: Exception): IclassException = when (error) {

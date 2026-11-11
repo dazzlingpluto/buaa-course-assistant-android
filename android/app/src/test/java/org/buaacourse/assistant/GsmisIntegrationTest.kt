@@ -38,6 +38,7 @@ class GsmisIntegrationTest {
                     reply(r, "", 302, mapped("https://byxt.buaa.edu.cn/jwapp/sys/byrhmhsy/currentUser.do").toString())
                     else reply(r, "Access denied", 403)
                 path.endsWith("/student/schoolCalendars.do") -> reply(r, "Access denied", 403)
+                path.endsWith("/homeapp/index.html") -> reply(r, "<html>Undergraduate portal</html>")
                 path.endsWith("/byrhmhsy/currentUser.do") -> reply(r, "{}")
                 path.endsWith("/wdkbapp/*default/index.do") && denied -> reply(r, "请在校园网环境下访问")
                 path.endsWith("/wdkbapp/*default/index.do") && r.url.queryParameter("ticket") == null -> {
@@ -110,7 +111,8 @@ class GsmisIntegrationTest {
         assertEquals("20261", result.academic!!.termCode)
         assertEquals(1, result.total)
         assertEquals(LocalDate.of(2026, 11, 9), result.days.first().date)
-        assertTrue(f.requests.any { it.url.encodedPath.endsWith("/student/schoolCalendars.do") })
+        assertEquals(2, f.requests.count { it.url.encodedPath.endsWith("/student/schoolCalendars.do") })
+        assertEquals(1, f.requests.count { it.url.encodedPath.endsWith("/homeapp/index.html") })
         val post = f.requests.single { it.url.encodedPath.endsWith("loadXskbData.do") }.body as FormBody
         assertEquals("20261", (0 until post.size).associate { post.name(it) to post.value(it) }["XNXQDM"])
         f.repo.logout()

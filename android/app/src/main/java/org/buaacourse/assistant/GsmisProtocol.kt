@@ -7,6 +7,9 @@ import java.time.LocalDate
 
 /** Parses the graduate timetable and conservatively relates its identities to iClass. */
 object GsmisProtocol {
+    private val termYear = Regex("(?<!\\d)(\\d{4})(?!\\d)")
+    private val numericTerm = Regex("(\\d{4})(?:[-—–/](?:\\d{4}[-—–/])?)?([123])")
+
     fun parseTerms(body: String): List<AcademicTerm> {
         val failure = "研究生系统学期列表格式异常，请刷新重试"
         val json = objectBody(body, failure)
@@ -39,6 +42,17 @@ object GsmisProtocol {
         val targetTerm = if (start.monthValue >= 7) 1 else 2
         val targetYear = if (targetTerm == 1) start.year else start.year - 1
         return terms.filter { interpretation(it.name) == (targetYear to targetTerm) }.distinct().singleOrNull()
+    }
+
+    internal fun termSortKey(term: AcademicTerm): Int {
+        interpretation(term.name)?.let { (year, semester) -> return year * 10 + semester }
+        val name = normalizedName(term.name)
+        val encoded = numericTerm.matchEntire(name) ?: numericTerm.matchEntire(normalizedName(term.code))
+        if (encoded != null) {
+            val (year, semester) = encoded.destructured
+            return year.toInt() * 10 + semester.toInt()
+        }
+        return (termYear.find(name)?.value?.toInt() ?: 0) * 10
     }
 
     fun parseSnapshot(body: String, term: AcademicTerm): AcademicSnapshot {
@@ -177,7 +191,7 @@ object GsmisProtocol {
         }
         // A lone year is only clear when explicitly marked as an academic year,
         // or with a calendar season. Names consisting of codes are not dates.
-        val years = Regex("(?<!\\d)(\\d{4})(?!\\d)").findAll(name).toList()
+        val years = termYear.findAll(name).toList()
         if (years.size != 1) return null
         val year = years.single().groupValues[1].toInt()
         return when {

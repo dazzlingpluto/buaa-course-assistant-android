@@ -20,6 +20,9 @@ class UndergraduateIntegrationTest {
 
     private class Fixture(val mode: NetworkMode = NetworkMode.DIRECT) {
         var iclassAvailable = true
+        var requiresPortalHome = false
+        private var byxtSessionReady = false
+        private var portalHomeVisited = false
         var academic = """{"code":"0","datas":{"code":"fixture-student","arrangedList":[{
             "courseCode":"B001","courseName":"高等数学","courseSerialNo":"section-01",
             "beginTime":"08:00","endTime":"09:35","beginSection":1,"endSection":2,
@@ -37,13 +40,24 @@ class UndergraduateIntegrationTest {
                 path.endsWith("/api/uc/status") -> reply(r, """{"code":0,"data":{"schoolid":"fixture-student","name":"演示用户"}}""")
                 path.endsWith("getTermWeeks.do") -> reply(r, """{"code":"0","datas":[{"serialNumber":1,"startDate":"2026-09-07","endDate":"2026-09-13","term":"term-undergraduate","curWeek":true}]}""")
                 r.url == mapped("https://byxt.buaa.edu.cn/jwapp/sys/homeapp/api/home/currentUser.do") -> {
-                    val sso = "https://sso.buaa.edu.cn/login".toHttpUrl().newBuilder()
-                        .addQueryParameter("service", "https://byxt.buaa.edu.cn/jwapp/sys/homeapp/api/home/currentUser.do").build()
-                    reply(r, "", 302, mapped(sso.toString()).toString())
+                    if (r.header("X-Requested-With") != null) {
+                        reply(r, "CAS redirect suppressed for AJAX", 401)
+                    } else {
+                        val sso = "https://sso.buaa.edu.cn/login".toHttpUrl().newBuilder()
+                            .addQueryParameter("service", "https://byxt.buaa.edu.cn/jwapp/sys/homeapp/api/home/currentUser.do").build()
+                        reply(r, "", 302, mapped(sso.toString()).toString())
+                    }
                 }
-                r.url == mapped("https://byxt.buaa.edu.cn/jwapp/sys/homeapp/api/home/currentUser.do?ticket=fixture-ticket") -> reply(r, """{"code":"0","datas":{"code":"fixture-student"}}""")
+                r.url == mapped("https://byxt.buaa.edu.cn/jwapp/sys/homeapp/api/home/currentUser.do?ticket=fixture-ticket") -> {
+                    byxtSessionReady = true
+                    reply(r, """{"code":"0","datas":{"code":"fixture-student"}}""")
+                }
                 path.endsWith("/login") && r.url.queryParameter("service") == "https://byxt.buaa.edu.cn/jwapp/sys/homeapp/api/home/currentUser.do" ->
                     reply(r, "", 302, mapped("https://byxt.buaa.edu.cn/jwapp/sys/homeapp/api/home/currentUser.do?ticket=fixture-ticket").toString())
+                path.endsWith("/homeapp/index.html") -> {
+                    portalHomeVisited = true
+                    reply(r, "<html>Undergraduate portal</html>")
+                }
                 path == endpoints.login.encodedPath && r.method == "GET" -> reply(r,
                     "<form id='loginForm'><input name='execution' value='fixture-execution'></form>")
                 path == endpoints.login.encodedPath && r.method == "POST" -> reply(r, "<html>Authenticated</html>")
@@ -53,8 +67,11 @@ class UndergraduateIntegrationTest {
                 path.endsWith("get_stu_course_sched.action") -> reply(r, if (r.url.queryParameter("dateStr") == "20260907")
                     """{"STATUS":0,"result":[{"id":"real-schedule","courseNum":"B001","courseName":"高等数学","classBeginTime":"08:00","classEndTime":"09:35"}]}"""
                     else """{"STATUS":2}""")
-                path.endsWith("schoolCalendars.do") -> reply(r,
-                    """{"code":"0","datas":[{"itemCode":"term-undergraduate","itemName":"2026-2027学年第一学期","selected":true}]}""")
+                path.endsWith("schoolCalendars.do") -> when {
+                    !byxtSessionReady -> reply(r, "No BYXT session", 401)
+                    requiresPortalHome && !portalHomeVisited -> reply(r, "BYXT portal has not been opened", 403)
+                    else -> reply(r, """{"code":"0","datas":[{"itemCode":"term-undergraduate","itemName":"2026-2027学年第一学期","selected":true}]}""")
+                }
                 path.endsWith("getMyScheduleDetail.do") -> reply(r, academic)
                 else -> error("Unexpected offline request: ${r.method} $path")
             }
@@ -78,6 +95,7 @@ class UndergraduateIntegrationTest {
         val query = academicRequests.single { it.url.encodedPath.endsWith("getMyScheduleDetail.do") }
         assertEquals("POST", query.method)
         assertEquals("XMLHttpRequest", query.header("X-Requested-With"))
+        assertEquals("application/json, text/javascript, */*; q=0.01", query.header("Accept"))
         assertEquals("https://byxt.buaa.edu.cn/jwapp/sys/homeapp/index.html", query.header("Referer"))
         val body = query.body as FormBody
         assertEquals(mapOf("termCode" to "term-undergraduate", "type" to "week", "week" to "1"),
@@ -103,6 +121,30 @@ class UndergraduateIntegrationTest {
         assertTrue(query.header("Referer")!!.startsWith("https://d.buaa.edu.cn/"))
         assertNull(query.header("sessionId"))
         f.repo.logout()
+    }
+
+    @Test fun undergraduateTermDenialOpensPortalAndRetriesTheSameRequestOnce() = runBlocking {
+        for (mode in NetworkMode.entries) {
+            val f = Fixture(mode).also { it.requiresPortalHome = true }
+            f.repo.login("fixture-student", "fixture-password", mode)
+            try {
+                val week = f.repo.loadWeek(1, start)
+                assertEquals(StudentType.UNDERGRADUATE, week.studentType)
+                assertEquals(1, week.total)
+                val recovery = f.requests.filter {
+                    it.url.encodedPath.endsWith("schoolCalendars.do") || it.url.encodedPath.endsWith("/homeapp/index.html")
+                }
+                assertEquals(listOf("schoolCalendars.do", "index.html", "schoolCalendars.do"),
+                    recovery.map { it.url.pathSegments.last() })
+                assertEquals(recovery.first().url, recovery.last().url)
+                assertEquals(recovery.first().headers, recovery.last().headers)
+                assertTrue(recovery.all { it.method == "GET" && it.body == null })
+                assertNull(recovery[1].header("X-Requested-With"))
+                assertTrue(f.requests.none { it.url.encodedPath.contains("/gsapp/") })
+            } finally {
+                f.repo.logout()
+            }
+        }
     }
 
     @Test fun officialOnlyCourseStaysVisibleButSyntheticIdsCannotBeSubmitted() = runBlocking {

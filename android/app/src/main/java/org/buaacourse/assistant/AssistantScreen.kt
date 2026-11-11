@@ -238,7 +238,7 @@ internal fun AcademicPanel(academic: AcademicComparison?, busy: Boolean, selectT
                         Text("⌄", Modifier.padding(start = 8.dp))
                     }
                     DropdownMenu(expanded = termMenu, onDismissRequest = { termMenu = false }, modifier = Modifier.heightIn(max = 320.dp)) {
-                        academic?.terms.orEmpty().forEach { term ->
+                        academic?.terms.orEmpty().sortedByDescending(GsmisProtocol::termSortKey).forEach { term ->
                             DropdownMenuItem(
                                 text = { Text(term.name.ifBlank { term.code }) }, enabled = !busy,
                                 onClick = { termMenu = false; selectTerm(term.code) },

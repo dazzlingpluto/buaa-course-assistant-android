@@ -435,13 +435,23 @@ class AssistantScreenTest {
     @Test fun academicTermSelectionPassesTheOfficialTermCode() {
         var selected = ""
         val state = loggedIn()
-        val academic = AcademicComparison(status = AcademicStatus.SELECT_TERM,
-            terms = listOf(AcademicTerm("official-a", "2026–2027 第一学期"), AcademicTerm("official-b", "2025–2026 第二学期")))
+        val olderTerm = AcademicTerm("official-b", "2025–2026 第二学期")
+        val firstTerm = AcademicTerm("official-z", "2026–2027 第一学期")
+        val secondTerm = AcademicTerm("official-a", "2026–2027 第二学期")
+        val academic = AcademicComparison(
+            status = AcademicStatus.SELECT_TERM,
+            terms = listOf(olderTerm, firstTerm, secondTerm),
+        )
         compose.setContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(academic = academic)), AssistantActions(academicTerm = { selected = it })) }
         compose.onNodeWithTag("academic_toggle").performClick()
         compose.onNodeWithTag("academic_term").performScrollTo().performClick()
-        compose.onNodeWithTag("academic_term_official-b").performClick()
-        assertEquals("official-b", selected)
+        val displayedTerms = listOf(secondTerm, firstTerm, olderTerm).map { term ->
+            compose.onNodeWithTag("academic_term_${term.code}").assertIsDisplayed()
+        }
+        val itemTops = displayedTerms.map { it.fetchSemanticsNode().boundsInRoot.top }
+        assertTrue(itemTops.zipWithNext().all { (upper, lower) -> upper < lower })
+        displayedTerms.last().performClick()
+        assertEquals(olderTerm.code, selected)
     }
 
     @Test fun unavailableComparisonPreservesReadOnlyDetail() {
