@@ -343,17 +343,25 @@ internal class AssistantController(
                 SignOutcome.SUCCESS -> text("签到成功", "Attendance submitted") to "success"
                 SignOutcome.SKIPPED -> text("该课程已签到", "Already signed") to "info"
                 SignOutcome.FAILED -> text("签到失败，请核对出勤情况及官方记录", "Attendance failed; check your attendance and official records") to "warning"
+                SignOutcome.UNKNOWN -> text("签到结果未确认，请刷新后核对签到状态", "Attendance result unconfirmed. Refresh to verify it.") to "warning"
             }
-            appendLog("$name：${item.message.ifBlank { fallback }}", level)
+            val detail = if (item.outcome == SignOutcome.UNKNOWN) fallback else item.message.ifBlank { fallback }
+            appendLog("$name：$detail", level)
         }
-        val signedIds = result.items.filter { it.outcome != SignOutcome.FAILED }.map { it.id }.toSet()
+        val signedIds = result.items.filter { it.outcome == SignOutcome.SUCCESS || it.outcome == SignOutcome.SKIPPED }
+            .map { it.id }.toSet()
         // Keep the submitted attendance result while the refresh runs, but a
         // failed refresh must not present an old academic comparison as current.
         mutableState.update { it.copy(schedule = it.schedule?.applyKnownResults(signedIds)?.withoutVerifiedAttendance()) }
-        val summary = text("签到完成：${result.success} 成功，${result.skipped} 已签到，${result.failed} 失败。",
-            "Attendance: ${result.success} succeeded, ${result.skipped} already signed, ${result.failed} failed.")
+        val summary = if (result.unknown > 0) {
+            text("签到结果：${result.success} 成功，${result.skipped} 已签到，${result.failed} 失败，${result.unknown} 未确认。",
+                "Attendance: ${result.success} succeeded, ${result.skipped} already signed, ${result.failed} failed, ${result.unknown} unconfirmed.")
+        } else {
+            text("签到完成：${result.success} 成功，${result.skipped} 已签到，${result.failed} 失败。",
+                "Attendance: ${result.success} succeeded, ${result.skipped} already signed, ${result.failed} failed.")
+        }
         message(summary)
-        appendLog(summary, if (result.failed > 0) "warning" else "success")
+        appendLog(summary, if (result.failed > 0 || result.unknown > 0) "warning" else "success")
         try {
             val current = state.value
             loadWeekInternal(current.week, signedIds)

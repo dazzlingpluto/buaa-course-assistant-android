@@ -984,4 +984,21 @@ class AssistantControllerTest {
             assertTrue(logs.any { it.level == "warning" && it.message.contains(if (english) "Attendance failed" else "签到失败") })
         }
     }
+
+    @Test fun unconfirmedSignResultIsNotAppliedAsSigned() = runTest {
+        val repo = FakeRepository().apply {
+            signItems = listOf(SignItem("one", "演示课程", SignOutcome.UNKNOWN))
+        }
+        val controller = controller(repo)
+        advanceUntilIdle()
+        enter(controller)
+        controller.login()
+        advanceUntilIdle()
+        controller.signCourse(controller.state.value.schedule!!.days.first().courses.first())
+        advanceUntilIdle()
+        val state = controller.state.value
+        assertEquals(0, state.schedule!!.signed)
+        assertTrue(state.logs.any { it.level == "warning" && "签到结果未确认" in it.message })
+        assertTrue(state.logs.any { it.level == "warning" && "1 未确认" in it.message })
+    }
 }

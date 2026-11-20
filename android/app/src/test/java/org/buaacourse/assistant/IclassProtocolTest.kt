@@ -9,9 +9,9 @@ import org.junit.Test
 class IclassProtocolTest {
     @Test fun webVpnEncryptionMatchesKnownSchoolEndpointAndPreservesQuery() {
         val endpoints = IclassProtocol.endpoints(NetworkMode.VPN)
-        assertEquals("https://d.buaa.edu.cn/http-8081/" +
+        assertEquals("https://d.buaa.edu.cn/https-8181/" +
             "77726476706e69737468656265737421f9f44d9d342326526b0988e29d51367ba018" +
-            "/app/course/stu_scan_sign.action", endpoints.sign.toString())
+            "/app/course/stu_auto_sign.action", endpoints.sign.toString())
         assertTrue(endpoints.myCenter.toString().contains("/https-8346/"))
         assertEquals("jumpMyCenter", endpoints.myCenter.queryParameter("type"))
         val converted = IclassProtocol.toWebVpnUrl("https://iclass.buaa.edu.cn:8346/?type=jumpMyCenter#section")
@@ -53,8 +53,18 @@ class IclassProtocolTest {
             assertTrue(action, error is IclassException)
             assertFalse(error!!.message.orEmpty().contains("password"))
         }
-        assertFalse(IclassProtocol.isTrustedUrl("http://iclass.buaa.edu.cn:8081/arbitrary".toHttpUrl()))
-        assertTrue(IclassProtocol.isTrustedUrl(IclassProtocol.endpoints(NetworkMode.DIRECT).sign))
+    }
+
+    @Test fun trustsOnlyTheDeclaredIclassSigningEndpointOnPort8181() {
+        val direct = IclassProtocol.endpoints(NetworkMode.DIRECT).sign
+        assertEquals("https://iclass.buaa.edu.cn:8181/app/course/stu_auto_sign.action", direct.toString())
+        assertTrue(IclassProtocol.isTrustedUrl(direct))
+        assertTrue(IclassProtocol.isTrustedUrl(IclassProtocol.endpoints(NetworkMode.VPN).sign))
+        assertFalse(IclassProtocol.isTrustedUrl(direct.newBuilder().encodedPath("/app/course/other.action").build()))
+        assertFalse(IclassProtocol.isTrustedUrl(direct.newBuilder().addQueryParameter("next", "untrusted").build()))
+        assertFalse(IclassProtocol.isTrustedUrl(direct.newBuilder().scheme("http").build()))
+        assertFalse(IclassProtocol.isTrustedUrl(direct.newBuilder().host("local.example").build()))
+        assertFalse(IclassProtocol.isTrustedUrl("http://iclass.buaa.edu.cn:8081/app/course/stu_scan_sign.action".toHttpUrl()))
     }
 
     @Test fun captchaAndUnsuccessfulCasPageAreExplicitFailures() {
@@ -84,10 +94,19 @@ class IclassProtocolTest {
     }
 
     @Test fun explicitStatusWinsOverAmbiguousSuccessWords() {
-        assertEquals(SignOutcome.SUCCESS, IclassProtocol.classifySignResponse(JSONObject("""{"STATUS":0}""")).outcome)
+        for (status in listOf("0", "200", "\"0\"", "\"200\"", "\"success\"")) {
+            val response = JSONObject("""{"STATUS":$status,"result":{"stuSignStatus":"1"}}""")
+            assertEquals(SignOutcome.SUCCESS, IclassProtocol.classifySignResponse(response).outcome)
+        }
+        val rejected = JSONObject("""{"STATUS":0,"result":{"stuSignStatus":0},"ERRMSG":"该课程已签到"}""")
+        assertEquals(SignOutcome.FAILED, IclassProtocol.classifySignResponse(rejected).outcome)
         assertEquals(SignOutcome.SKIPPED, IclassProtocol.classifySignResponse(JSONObject("""{"STATUS":1,"ERRMSG":"该课程已签到"}""")).outcome)
         assertEquals(SignOutcome.FAILED, IclassProtocol.classifySignResponse(JSONObject("""{"STATUS":1,"ERRMSG":"签到未成功"}""")).outcome)
-        assertEquals(SignOutcome.FAILED, IclassProtocol.classifySignResponse(JSONObject("""{"message":"SUCCESS"}""")).outcome)
+        for (body in listOf("""{"STATUS":0}""", """{"STATUS":0,"result":{"stuSignStatus":2}}""", """{"message":"SUCCESS"}""")) {
+            val result = IclassProtocol.classifySignResponse(JSONObject(body))
+            assertEquals(SignOutcome.UNKNOWN, result.outcome)
+            assertEquals(IclassProtocol.unconfirmedSignMessage, result.message)
+        }
         assertEquals("", IclassProtocol.value(JSONObject("""{"id":null}"""), "id"))
         assertEquals("123", IclassProtocol.value(JSONObject("""{"id":123}"""), "id"))
     }

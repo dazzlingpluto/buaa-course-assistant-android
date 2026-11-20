@@ -10,8 +10,8 @@ android {
         applicationId 'org.buaacourse.assistant'
         minSdk 24
         targetSdk 36
-        versionCode 24027
-        versionName '2.3.3'
+        versionCode 24028
+        versionName '2.3.4'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
     compileOptions {
@@ -22,9 +22,10 @@ android {
     buildFeatures {
         compose true
     }
+    def signingKey = rootProject.file('../build/android-signing/buaa-course-assistant-signing.jks')
     signingConfigs {
         debug {
-            storeFile rootProject.file('../build/android-signing/debug.keystore')
+            storeFile(signingKey.isFile() ? signingKey : rootProject.file('../build/android-signing/debug.keystore'))
             storePassword System.getenv('BUAA_SIGNING_STORE_PASSWORD') ?: 'android'
             keyPassword System.getenv('BUAA_SIGNING_KEY_PASSWORD') ?: 'android'
             keyAlias 'androiddebugkey'

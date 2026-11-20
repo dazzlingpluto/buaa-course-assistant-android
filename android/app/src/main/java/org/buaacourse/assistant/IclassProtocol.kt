@@ -1,6 +1,7 @@
 package org.buaacourse.assistant
 
 import android.annotation.SuppressLint
+import okhttp3.FormBody
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
@@ -15,7 +16,8 @@ object IclassProtocol {
     private val vpnKey = "wrdvpnisthebest!".toByteArray(Charsets.UTF_8)
     private val vpnCasHost = encryptHost("sso.buaa.edu.cn")
     private val loginNamePattern = Regex("loginName=([^&#\\\"'<>\\s]+)", RegexOption.IGNORE_CASE)
-    private val signPaths = setOf("/app/common/get_timestamp.action", "/app/course/stu_scan_sign.action")
+    private const val signUrl = "https://iclass.buaa.edu.cn:8181/app/course/stu_auto_sign.action"
+    internal const val unconfirmedSignMessage = "签到结果未确认，请刷新后核对签到状态"
 
     private const val loginFormSelector = "form#loginForm, form#fm1, form:has(input[name=execution]), form:has(input[name=password])"
 
@@ -24,7 +26,6 @@ object IclassProtocol {
         val myCenter: HttpUrl,
         val userLogin: HttpUrl,
         val schedule: HttpUrl,
-        val timestamp: HttpUrl,
         val sign: HttpUrl,
     )
 
@@ -40,8 +41,7 @@ object IclassProtocol {
             mapped(login), mapped("https://iclass.buaa.edu.cn:8346/?type=jumpMyCenter"),
             mapped("https://iclass.buaa.edu.cn:8347/app/user/login.action"),
             mapped("https://iclass.buaa.edu.cn:8347/app/course/get_stu_course_sched.action"),
-            mapped("http://iclass.buaa.edu.cn:8081/app/common/get_timestamp.action"),
-            mapped("http://iclass.buaa.edu.cn:8081/app/course/stu_scan_sign.action"),
+            mapped(signUrl),
         )
     }
 
@@ -87,7 +87,7 @@ object IclassProtocol {
 
     fun isTrustedUrl(url: HttpUrl): Boolean {
         if (url.username.isNotEmpty() || url.password.isNotEmpty()) return false
-        if (url.scheme == "http") return url.host == "iclass.buaa.edu.cn" && url.port == 8081 && url.encodedPath in signPaths
+        if (url.toString() == signUrl) return true
         return url.scheme == "https" && when (url.host) {
             "sso.buaa.edu.cn", "d.buaa.edu.cn", "uc.buaa.edu.cn", "gsmis.buaa.edu.cn", "byxt.buaa.edu.cn" -> url.port == 443
             "iclass.buaa.edu.cn" -> url.port in setOf(443, 8346, 8347)
@@ -183,11 +183,25 @@ object IclassProtocol {
     fun message(data: JSONObject): String = listOf("ERRMSG", "ERRORMSG", "MSG", "message", "msg")
         .firstNotNullOfOrNull { key -> value(data, key).takeIf { it.isNotBlank() } }.orEmpty()
 
+    fun buildSignForm(userId: String, scheduleId: String): FormBody = FormBody.Builder()
+        .add("id", userId)
+        .add("courseSchedId", scheduleId)
+        .add("routerInfo", "02:00:00:00:00:00")
+        .add("longitude", "0")
+        .add("latitude", "0")
+        .add("machineInfo", "Android")
+        .build()
+
     fun classifySignResponse(data: JSONObject): SignClassification {
+        val responseStatus = status(data).let { if (it == "success") 0L else it.toLongOrNull() }
+        val accepted = responseStatus == 0L || responseStatus == 200L
+        val signStatus = data.optJSONObject("result")?.let { value(it, "stuSignStatus").toIntOrNull() }
         val message = message(data)
         return when {
-            status(data) == "0" -> SignClassification(SignOutcome.SUCCESS, "签到成功")
-            "已签到" in message -> SignClassification(SignOutcome.SKIPPED, "该课程已签到")
+            accepted && signStatus == 1 -> SignClassification(SignOutcome.SUCCESS, "签到成功")
+            responseStatus == null || (accepted && signStatus != 0) ->
+                SignClassification(SignOutcome.UNKNOWN, unconfirmedSignMessage)
+            signStatus != 0 && "已签到" in message -> SignClassification(SignOutcome.SKIPPED, "该课程已签到")
             "时间" in message || "未开始" in message || "结束" in message ->
                 SignClassification(SignOutcome.FAILED, "当前不在可签到时段，请核对课程时间")
             "登录" in message || "失效" in message || "过期" in message ->

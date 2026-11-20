@@ -7,7 +7,7 @@ enum class NetworkMode { DIRECT, VPN }
 enum class AttendanceMode { TIMETABLE, ICLASS }
 enum class StudentType { AUTO, UNDERGRADUATE, GRADUATE }
 enum class AppLanguage { ZH, EN }
-enum class SignOutcome { SUCCESS, SKIPPED, FAILED }
+enum class SignOutcome { SUCCESS, SKIPPED, FAILED, UNKNOWN }
 enum class AcademicStatus { VERIFIED, SELECT_TERM, UNAVAILABLE, UNMATCHED }
 
 data class AcademicTerm(val code: String, val name: String, val selected: Boolean = false)
@@ -96,6 +96,7 @@ data class SignSummary(val items: List<SignItem>) {
     val success: Int get() = items.count { it.outcome == SignOutcome.SUCCESS }
     val skipped: Int get() = items.count { it.outcome == SignOutcome.SKIPPED }
     val failed: Int get() = items.count { it.outcome == SignOutcome.FAILED }
+    val unknown: Int get() = items.count { it.outcome == SignOutcome.UNKNOWN }
 }
 data class AppLog(val message: String, val level: String = "info", val time: LocalTime = LocalTime.now())
 

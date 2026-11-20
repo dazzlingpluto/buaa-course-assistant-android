@@ -156,7 +156,7 @@ class UndergraduateIntegrationTest {
         assertTrue(course.scheduleIds.isEmpty())
         assertEquals(1, week.academic?.uncertainCount)
         assertEquals(1, f.repo.signCourses(listOf(course)).failed)
-        assertTrue(f.requests.none { it.url.encodedPath.endsWith("stu_scan_sign.action") || it.url.encodedPath.endsWith("get_timestamp.action") })
+        assertTrue(f.requests.none { it.url.encodedPath.endsWith("stu_auto_sign.action") })
         f.repo.logout()
     }
 

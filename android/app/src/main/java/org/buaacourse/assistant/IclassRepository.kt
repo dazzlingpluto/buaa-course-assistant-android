@@ -17,7 +17,10 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.Response
+import okio.BufferedSink
+import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
@@ -306,22 +309,11 @@ class IclassRepository(
     }
 
     private suspend fun loadIclassDays(session: NetworkSession, start: LocalDate): List<DaySchedule> = coroutineScope {
-        val userId = session.iclassUserId
         val days = (0L..6L).map { offset ->
             async {
                 val date = start.plusDays(offset)
                 try {
-                    if (session.sessionId.isBlank() || userId.isBlank()) throw IclassException("iClass 签到服务尚未连接")
-                    val url = session.endpoints.schedule.newBuilder().addQueryParameter("id", userId)
-                        .addQueryParameter("dateStr", date.format(DateTimeFormatter.BASIC_ISO_DATE)).build()
-                    val data = json(follow(session, authenticatedRequest(session, url)).body)
-                    val courses = when (IclassProtocol.status(data)) {
-                        "2" -> emptyList()
-                        "0" -> IclassProtocol.parseCourses(data.optJSONArray("result")
-                            ?: throw IclassException("课程数据格式异常，请刷新重试"))
-                        else -> throw IclassException("课程接口返回失败，请检查登录状态")
-                    }
-                    DaySchedule(date, courses)
+                    DaySchedule(date, IclassProtocol.parseCourses(loadIclassRows(session, date)))
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
                     log("${date.format(DateTimeFormatter.ISO_LOCAL_DATE)} 课程获取失败", "warning")
@@ -331,6 +323,19 @@ class IclassRepository(
         }.awaitAll()
         ensureSession(session)
         days
+    }
+
+    private suspend fun loadIclassRows(session: NetworkSession, date: LocalDate): JSONArray {
+        val userId = session.iclassUserId
+        if (session.sessionId.isBlank() || userId.isBlank()) throw IclassException("iClass 签到服务尚未连接")
+        val url = session.endpoints.schedule.newBuilder().addQueryParameter("id", userId)
+            .addQueryParameter("dateStr", date.format(DateTimeFormatter.BASIC_ISO_DATE)).build()
+        val data = json(follow(session, authenticatedRequest(session, url)).body)
+        return when (IclassProtocol.status(data)) {
+            "2" -> JSONArray()
+            "0" -> data.optJSONArray("result") ?: throw IclassException("课程数据格式异常，请刷新重试")
+            else -> throw IclassException("课程接口返回失败，请检查登录状态")
+        }
     }
 
     override fun selectAcademicTerm(code: String) {
@@ -482,7 +487,7 @@ class IclassRepository(
                 results += SignItem(course.id, course.courseName, SignOutcome.FAILED, "未找到对应的 iClass 排课，暂不可签到")
                 continue
             }
-            val ids = (course.scheduleIds + course.id).filter { it.isNotBlank() }.distinct()
+            val ids = course.realIds
             if (ids.isEmpty()) {
                 results += SignItem("", course.courseName, SignOutcome.FAILED, "课程缺少排课编号，请刷新课表")
                 continue
@@ -496,15 +501,9 @@ class IclassRepository(
                     continue
                 }
                 try {
-                    val timestamp = IclassProtocol.value(json(follow(session,
-                        authenticatedRequest(session, session.endpoints.timestamp)).body), "timestamp").trim()
-                    if (timestamp.isBlank()) throw IclassException("签到服务器未返回时间凭据，请重试")
-                    val url = session.endpoints.sign.newBuilder().addQueryParameter("courseSchedId", id)
-                        .addQueryParameter("timestamp", timestamp).build()
-                    val body = FormBody.Builder().add("id", userId).build()
-                    val page = follow(session, authenticatedRequest(session, url).newBuilder().post(body).build())
-                    val classification = IclassProtocol.classifySignResponse(json(page.body))
-                    results += SignItem(id, course.courseName, classification.outcome, classification.message)
+                    val eligibility = verifySignEligibility(session, id)
+                    val result = eligibility ?: submitAttendance(session, userId, id)
+                    results += SignItem(id, course.courseName, result.outcome, result.message)
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
                     results += SignItem(id, course.courseName, SignOutcome.FAILED, safeError(error).message.orEmpty())
@@ -514,7 +513,45 @@ class IclassRepository(
         }
         ensureSession(session)
         return SignSummary(results).also {
-            log("签到完成：${it.success} 成功，${it.skipped} 已签到，${it.failed} 失败", if (it.failed > 0) "warning" else "success")
+            val unknown = if (it.unknown > 0) "，${it.unknown} 未确认" else ""
+            log("签到结果：${it.success} 成功，${it.skipped} 已签到，${it.failed} 失败$unknown",
+                if (it.failed > 0 || it.unknown > 0) "warning" else "success")
+        }
+    }
+
+    private suspend fun verifySignEligibility(session: NetworkSession, id: String): IclassProtocol.SignClassification? {
+        val rows = loadIclassRows(session, LocalDate.now(schoolClock))
+        val matches = (0 until rows.length()).map { index ->
+            rows.optJSONObject(index) ?: throw IclassException("签到前读取的课程数据格式异常，请刷新重试")
+        }.filter { IclassProtocol.value(it, "id").trim() == id }
+        val match = matches.singleOrNull()
+            ?: throw IclassException("今日 iClass 排课中未找到唯一匹配的签到课程，请刷新后重试")
+        return when (IclassProtocol.value(match, "signStatus").trim()) {
+            "0" -> null
+            "1" -> IclassProtocol.SignClassification(SignOutcome.SKIPPED, "该课程已签到")
+            else -> throw IclassException("无法确认该课程当前的签到资格，请刷新后重试")
+        }
+    }
+
+    private suspend fun submitAttendance(session: NetworkSession, userId: String, id: String): IclassProtocol.SignClassification {
+        val form = IclassProtocol.buildSignForm(userId, id)
+        // A connection failure or redirect can follow a successful write.
+        val body = object : RequestBody() {
+            override fun contentType() = form.contentType()
+            override fun contentLength() = form.contentLength()
+            override fun writeTo(sink: BufferedSink) = form.writeTo(sink)
+            override fun isOneShot() = true
+        }
+        val request = authenticatedRequest(session, session.endpoints.sign).newBuilder().post(body).build()
+        val unconfirmed = IclassProtocol.SignClassification(SignOutcome.UNKNOWN, IclassProtocol.unconfirmedSignMessage)
+        return try {
+            // Do not follow redirects after submitting attendance.
+            val page = execute(session, request)
+            if (page.code == 200) IclassProtocol.classifySignResponse(json(page.body)) else unconfirmed
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            unconfirmed
         }
     }
 

@@ -15,8 +15,10 @@ import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
 import org.junit.Assert.*
 import org.junit.Test
+import java.net.URLDecoder
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
@@ -48,8 +50,7 @@ class IclassRepositoryTest {
                 request.url.encodedPath.endsWith("/user/login.action") -> reply(request,
                     """{"STATUS":0,"result":{"id":123,"sessionId":"session-secret","realName":"演示用户"}}""")
                 request.url.encodedPath.endsWith("get_stu_course_sched.action") -> reply(request, """{"STATUS":2}""")
-                request.url.encodedPath.endsWith("get_timestamp.action") -> reply(request, """{"timestamp":"1770000123456"}""")
-                request.url.encodedPath.endsWith("stu_scan_sign.action") -> reply(request, """{"STATUS":0}""")
+                isSignRequest(request) -> reply(request, """{"STATUS":0,"result":{"stuSignStatus":1}}""")
                 else -> error("Unexpected offline request path: ${request.url.encodedPath}")
             }
         }).build()
@@ -238,12 +239,15 @@ class IclassRepositoryTest {
             val summary = fixture.repo.signCourses(listOf(course))
             assertEquals(1, summary.success)
             assertEquals(1, summary.skipped)
-            val signRequest = fixture.requests.single { it.url.encodedPath.endsWith("stu_scan_sign.action") }
-            assertEquals("pending", signRequest.url.queryParameter("courseSchedId"))
+            val signRequest = fixture.requests.single(::isSignRequest)
+            assertEquals("https://iclass.buaa.edu.cn:8181/app/course/stu_auto_sign.action", signRequest.url.toString())
+            assertEquals("pending", signFields(signRequest)["courseSchedId"])
             assertEquals("session-secret", signRequest.header("sessionId"))
             val dates = fixture.requests.filter { it.url.encodedPath.endsWith("get_stu_course_sched.action") }
             assertEquals((9..15).map { "202611${it.toString().padStart(2, '0')}" },
-                dates.mapNotNull { it.url.queryParameter("dateStr") }.sorted())
+                dates.mapNotNull { it.url.queryParameter("dateStr") }.distinct().sorted())
+            assertEquals(8, dates.size)
+            assertEquals("20261109", dates.last().url.queryParameter("dateStr"))
             assertTrue(fixture.requests.all { it.url.host in setOf("sso.buaa.edu.cn", "uc.buaa.edu.cn", "iclass.buaa.edu.cn") })
         } finally { fixture.repo.logout() }
     }
@@ -280,6 +284,8 @@ class IclassRepositoryTest {
                 request.url.encodedPath.endsWith("/api/uc/status") -> reply(request, """{"code":0,"data":{"schoolid":"123","name":"演示用户"}}""")
                 request.url == endpoints.myCenter -> reply(request, "", 302,
                     endpoints.myCenter.newBuilder().query(null).addQueryParameter("loginName", "vpn+name=").build().toString())
+                request.url.encodedPath.endsWith("get_stu_course_sched.action") ->
+                    reply(request, """{"STATUS":0,"result":[{"id":"vpn-class","signStatus":0}]}""")
                 else -> null
             }
         }
@@ -288,7 +294,10 @@ class IclassRepositoryTest {
         assertEquals(1, summary.success)
         assertTrue(fixture.requests.all { it.url.host == "d.buaa.edu.cn" && it.url.scheme == "https" })
         assertTrue("VPN must complete the portal cookie exchange", fixture.requests.any { it.url.toString() == "https://d.buaa.edu.cn/" })
-        assertTrue(fixture.requests.last().url.encodedPath.startsWith("/http-8081/"))
+        val submitted = fixture.requests.single(::isSignRequest)
+        assertTrue(submitted.url.encodedPath.startsWith("/https-8181/"))
+        assertEquals(443, submitted.url.port)
+        assertEquals("vpn-class", signFields(submitted)["courseSchedId"])
         fixture.repo.logout()
     }
 
@@ -344,11 +353,16 @@ class IclassRepositoryTest {
         fixture.repo.logout()
     }
 
-    @Test fun mergedCourseSignsEveryUniqueScheduleAndTreatsPlainTextSuccessAsFailure() = runBlocking {
+    @Test fun mergedCourseSignsEveryUniqueScheduleAndTreatsPlainTextAsAnUnconfirmedResult() = runBlocking {
         val fixture = Fixture { request ->
-            if (!request.url.encodedPath.endsWith("stu_scan_sign.action")) null else when (request.url.queryParameter("courseSchedId")) {
-                "b" -> reply(request, """{"STATUS":1,"ERRMSG":"该课程已签到"}""")
-                "c" -> reply(request, "签到未成功")
+            when {
+                request.url.encodedPath.endsWith("get_stu_course_sched.action") ->
+                    reply(request, """{"STATUS":0,"result":[{"id":"a","signStatus":0},{"id":"b","signStatus":0},{"id":"c","signStatus":0}]}""")
+                isSignRequest(request) -> when (signFields(request)["courseSchedId"]) {
+                    "b" -> reply(request, """{"STATUS":1,"ERRMSG":"该课程已签到"}""")
+                    "c" -> reply(request, "签到成功")
+                    else -> null
+                }
                 else -> null
             }
         }
@@ -359,16 +373,61 @@ class IclassRepositoryTest {
         ))
         assertEquals(1, summary.success)
         assertEquals(2, summary.skipped)
-        assertEquals(1, summary.failed)
-        val posts = fixture.requests.filter { it.url.encodedPath.endsWith("stu_scan_sign.action") }
-        assertEquals(listOf("a", "b", "c"), posts.map { it.url.queryParameter("courseSchedId") })
+        assertEquals(0, summary.failed)
+        assertEquals(1, summary.unknown)
+        val posts = fixture.requests.filter(::isSignRequest)
+        assertEquals(listOf("a", "b", "c"), posts.map { signFields(it)["courseSchedId"] })
         posts.forEach { request ->
-            assertEquals("1770000123456", request.url.queryParameter("timestamp"))
+            assertEquals("POST", request.method)
+            assertNull(request.url.query)
             assertEquals("session-secret", request.header("sessionId"))
-            val form = request.body as FormBody
-            assertEquals("id", form.name(0)); assertEquals("123", form.value(0))
+            assertEquals("application/x-www-form-urlencoded", request.body?.contentType().toString())
+            val fields = signFields(request)
+            assertEquals(setOf("id", "courseSchedId", "routerInfo", "longitude", "latitude", "machineInfo"), fields.keys)
+            assertEquals("123", fields["id"])
+            assertTrue(checkNotNull(request.body).isOneShot())
         }
         fixture.repo.logout()
+    }
+
+    @Test fun verifiesTodaysUniquePendingScheduleBeforeSubmitting() = runBlocking {
+        val fixture = Fixture(novemberSchoolClock) { request ->
+            if (request.url.encodedPath.endsWith("get_stu_course_sched.action")) {
+                assertEquals("20261109", request.url.queryParameter("dateStr"))
+                reply(request, """{"STATUS":0,"result":[
+                    {"id":"signed","signStatus":1},{"id":"duplicate","signStatus":0},
+                    {"id":"duplicate","signStatus":0},{"id":"unknown"},{"id":"pending","signStatus":"0"}
+                ]}""")
+            } else null
+        }
+        fixture.repo.login("u", "p", NetworkMode.DIRECT)
+        try {
+            val summary = fixture.repo.signCourses(listOf("signed", "duplicate", "unknown", "missing", "pending").map {
+                Course(it, "演示课程")
+            })
+            assertEquals(listOf(SignOutcome.SKIPPED, SignOutcome.FAILED, SignOutcome.FAILED, SignOutcome.FAILED, SignOutcome.SUCCESS),
+                summary.items.map { it.outcome })
+            assertEquals("pending", signFields(fixture.requests.single(::isSignRequest))["courseSchedId"])
+        } finally { fixture.repo.logout() }
+    }
+
+    @Test fun signingDoesNotFollowRedirectsAndReportsAnUnconfirmedResult() = runBlocking {
+        for (code in listOf(302, 307, 308)) {
+            val fixture = Fixture { request ->
+                when {
+                    request.url.encodedPath.endsWith("get_stu_course_sched.action") ->
+                        reply(request, """{"STATUS":0,"result":[{"id":"pending","signStatus":0}]}""")
+                    isSignRequest(request) -> reply(request, "", code, "https://sso.buaa.edu.cn/done")
+                    else -> null
+                }
+            }
+            fixture.repo.login("u", "p", NetworkMode.DIRECT)
+            try {
+                val summary = fixture.repo.signCourses(listOf(Course("pending", "演示课程")))
+                assertEquals(SignOutcome.UNKNOWN, summary.items.single().outcome)
+                assertEquals(fixture.requests.single(::isSignRequest), fixture.requests.last())
+            } finally { fixture.repo.logout() }
+        }
     }
 
     @Test fun passwordIsNeverRepostedToAnotherServiceOn307Or308Redirect() = runBlocking {
@@ -446,6 +505,17 @@ class IclassRepositoryTest {
 
     companion object {
         private val novemberSchoolClock = Clock.fixed(Instant.parse("2026-11-08T16:30:00Z"), ZoneId.of("Asia/Shanghai"))
+
+        private fun isSignRequest(request: Request): Boolean = request.url.encodedPath.endsWith("/stu_auto_sign.action")
+
+        private fun signFields(request: Request): Map<String, String> {
+            val buffer = Buffer()
+            checkNotNull(request.body).writeTo(buffer)
+            return buffer.readUtf8().split('&').associate { field ->
+                val (name, value) = field.split('=', limit = 2)
+                URLDecoder.decode(name, "UTF-8") to URLDecoder.decode(value, "UTF-8")
+            }
+        }
 
         private fun reply(request: Request, body: String, code: Int = 200, location: String? = null): Response =
             Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(code).message("Offline test")
