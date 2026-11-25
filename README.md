@@ -1,4 +1,4 @@
-# BUAA Course Assistant · 北航课程助手(BCAA)
+# BUAA Course Assistant · 北航课程助手 · BCAA
 
 面向 Android 手机的北航课程助手，支持查看本科生和研究生的教务周课表，以及通过课表或 iClass 列表手动签到。
 
