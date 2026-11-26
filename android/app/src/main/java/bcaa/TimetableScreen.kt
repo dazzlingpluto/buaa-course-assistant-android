@@ -31,11 +31,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.time.Instant
 import java.time.LocalDate
 
 @Composable
 internal fun TimetableContent(state: AssistantUiState, actions: AssistantActions) {
     val words = UiWords(state.language)
+    val now by rememberAttendanceTime()
     val directAttendance = state.attendanceMode == AttendanceMode.ICLASS
     val snackbar = remember { SnackbarHostState() }
     var logOpen by rememberSaveable { mutableStateOf(false) }
@@ -75,7 +77,7 @@ internal fun TimetableContent(state: AssistantUiState, actions: AssistantActions
         bottomBar = { LogTray(state.logs, logOpen, { logOpen = !logOpen }, words) },
     ) { padding ->
         if (selected != null) {
-            CourseDetail(selected.first, selected.second, state, actions, words, { selectedKey = null }, Modifier.padding(padding))
+            CourseDetail(selected.first, selected.second, state, actions, words, now, { selectedKey = null }, Modifier.padding(padding))
         } else {
             Column(Modifier.fillMaxSize().padding(padding).testTag("timetable_page")) {
                 TimetableHeader(state, actions, words)
@@ -133,7 +135,7 @@ internal fun TimetableContent(state: AssistantUiState, actions: AssistantActions
                     }
                 } else if (directAttendance) {
                     key(state.week) {
-                        DirectAttendanceList(state, actions, words, Modifier.weight(1f)) { date, course ->
+                        DirectAttendanceList(state, actions, words, now, Modifier.weight(1f)) { date, course ->
                             selectedKey = TimetableLayout.key(date, course)
                         }
                     }
@@ -226,9 +228,11 @@ private fun DirectAttendanceList(
     state: AssistantUiState,
     actions: AssistantActions,
     words: UiWords,
+    now: Instant,
     modifier: Modifier,
     onCourse: (LocalDate, Course) -> Unit,
 ) {
+    val clock = LocalAttendanceClock.current
     LazyColumn(
         modifier.fillMaxWidth().testTag("iclass_attendance_list"),
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
@@ -248,6 +252,8 @@ private fun DirectAttendanceList(
                             Modifier.testTag("empty_day_${day.date}"), color = SoftInk, fontSize = 12.sp)
                         else -> day.courses.forEach { course ->
                             val canAttend = canSignDirectly(course)
+                            val signingWindow = attendanceSignWindow(day.date, course)
+                            val withinSigningWindow = signingWindow?.contains(now) == true
                             HorizontalDivider(color = Line)
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -259,9 +265,12 @@ private fun DirectAttendanceList(
                                     Text(course.courseName, fontWeight = FontWeight.SemiBold, color = Ink)
                                     Text(timeRange(course), fontSize = 12.sp, color = DeepBlue)
                                     Text(location(course, words), fontSize = 12.sp, color = SoftInk)
+                                    Text(words.text("签到时段：课前 5 分钟至开课后 30 分钟", "Sign-in window: 5 min before to 30 min after class starts"),
+                                        Modifier.testTag("attendance_sign_window_${course.id}"), fontSize = 12.sp, color = SoftInk)
                                 }
                                 Button(
-                                    onClick = { actions.sign(course) }, enabled = !state.busy && canAttend && !course.signed,
+                                    onClick = { if (signingWindow?.contains(clock.instant()) == true) actions.sign(course) },
+                                    enabled = !state.busy && canAttend && !course.signed && withinSigningWindow,
                                     modifier = Modifier.testTag("sign_${course.id}"), shape = RoundedCornerShape(12.dp),
                                     contentPadding = PaddingValues(horizontal = 12.dp),
                                 ) {
@@ -387,8 +396,9 @@ private fun WeeklyGrid(state: AssistantUiState, words: UiWords, modifier: Modifi
 }
 
 @Composable
-private fun CourseDetail(date: LocalDate?, course: Course, state: AssistantUiState, actions: AssistantActions, words: UiWords, back: () -> Unit, modifier: Modifier) {
+private fun CourseDetail(date: LocalDate?, course: Course, state: AssistantUiState, actions: AssistantActions, words: UiWords, now: Instant, back: () -> Unit, modifier: Modifier) {
     val directAttendance = state.attendanceMode == AttendanceMode.ICLASS
+    val clock = LocalAttendanceClock.current
     val hasTime = date != null && TimetableLayout.time(course.classBeginTime) != null && TimetableLayout.time(course.classEndTime) != null
     val canAttend = if (directAttendance) canSignDirectly(course) else course.attendanceAvailable && hasTime
     Column(modifier.fillMaxSize().testTag("course_detail")) {
@@ -447,19 +457,24 @@ private fun CourseDetail(date: LocalDate?, course: Course, state: AssistantUiSta
                                 Modifier.testTag("attendance_unavailable_${course.id}"), fontSize = 13.sp, color = SoftInk)
                         }
                         Text(words.text("请根据实际出勤情况操作。\n结果以智慧北航APP“智慧教室”为准。", "Submit for your actual attendance.\nCheck the Smart Classroom records in the Smart BUAA app for the result."), fontSize = 12.sp, color = SoftInk)
+                        Text(words.text("签到时段：课前 5 分钟至开课后 30 分钟", "Sign-in window: 5 min before to 30 min after class starts"),
+                            Modifier.testTag("attendance_sign_window_${course.id}"), fontSize = 12.sp, color = SoftInk)
                         if (course.attendanceNotRequired) {
                             Text(words.text("iClass 本周未查到该课程排课，无需在 iClass 签到。", "No iClass schedule was found for this class this week. Attendance is not required."),
                                 Modifier.testTag("attendance_not_required_${course.id}"), fontSize = 13.sp, color = SoftInk)
                         } else if (course.attendanceSessions.size > 1) {
                             Text(words.text("按实际排课分别签到", "Sign each session separately"), fontSize = 12.sp, color = SoftInk)
                             course.attendanceSessions.forEachIndexed { index, session ->
+                                val signingWindow = attendanceSignWindow(date, session)
+                                val withinSigningWindow = signingWindow?.contains(now) == true
                                 val slotSpan = TimetableLayout.span(session, TimetableLayout.periods(state.schedule))
                                 val label = slotSpan?.let {
                                     words.text("第 ${TimetableLayout.periods(state.schedule)[it.first].number}–${TimetableLayout.periods(state.schedule)[it.last].number} 节", "Periods ${TimetableLayout.periods(state.schedule)[it.first].number}–${TimetableLayout.periods(state.schedule)[it.last].number}")
                                 } ?: words.text("第 ${index + 1} 场", "Session ${index + 1}")
                                 Column(Modifier.fillMaxWidth().testTag("attendance_session_${session.id}"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text("$label · ${timeRange(session)}", fontWeight = FontWeight.Medium)
-                                    Button(onClick = { actions.sign(session) }, enabled = !state.busy && canAttend && session.attendanceAvailable && !session.signed,
+                                    Button(onClick = { if (signingWindow?.contains(clock.instant()) == true) actions.sign(session) },
+                                        enabled = !state.busy && canAttend && session.attendanceAvailable && !session.signed && withinSigningWindow,
                                         modifier = Modifier.fillMaxWidth().testTag("sign_${session.id}"), shape = RoundedCornerShape(12.dp)) {
                                         Text(if (session.signed) words.text("✓ 已签到", "✓ Signed") else words.text("签到", "Sign"))
                                     }
@@ -468,7 +483,10 @@ private fun CourseDetail(date: LocalDate?, course: Course, state: AssistantUiSta
                             }
                         } else {
                             val session = course.attendanceSessions.singleOrNull() ?: course
-                            Button(onClick = { actions.sign(session) }, enabled = !state.busy && !course.signed && canAttend,
+                            val signingWindow = attendanceSignWindow(date, session)
+                            val withinSigningWindow = signingWindow?.contains(now) == true
+                            Button(onClick = { if (signingWindow?.contains(clock.instant()) == true) actions.sign(session) },
+                                enabled = !state.busy && !course.signed && canAttend && withinSigningWindow,
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("sign_${course.id}"), shape = RoundedCornerShape(12.dp)) {
                                 if (state.busy) { CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
                                 Text(if (!canAttend) words.text("暂不可签到", "Attendance unavailable") else if (course.signed) words.text("✓ 已完成签到", "✓ Signed") else if (state.busy) words.text("处理中…", "Working…") else words.text("签到", "Sign"), fontWeight = FontWeight.SemiBold)

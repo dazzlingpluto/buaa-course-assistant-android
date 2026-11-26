@@ -1,7 +1,10 @@
 package bcaa
 
 import java.io.IOException
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -65,7 +68,7 @@ class AssistantControllerTest {
         val selectedStudentTypes = mutableListOf<StudentType>()
         var loginStudentType: StudentType? = null
         var submittedCourses: List<Course> = emptyList()
-        var courses = listOf(Course("one", "演示课程", scheduleIds = listOf("one", "teacher-two")))
+        var courses = listOf(Course("one", "演示课程", classBeginTime = "08:00", classEndTime = "09:35", scheduleIds = listOf("one", "teacher-two")))
         var academic: AcademicComparison? = AcademicComparison(
             status = AcademicStatus.VERIFIED,
             termCode = "term-one",
@@ -108,7 +111,7 @@ class AssistantControllerTest {
             val actualStart = directStart ?: semesterStart
             val monday = actualStart.plusWeeks(actualWeek.toLong() - 1)
             return WeekSchedule(actualWeek, actualStart, listOf(
-                DaySchedule(monday, listOf(Course("one", "iClass 示例课程", scheduleIds = listOf("one", "teacher-two")))),
+                DaySchedule(monday, listOf(Course("one", "iClass 示例课程", classBeginTime = "08:00", classEndTime = "09:35", scheduleIds = listOf("one", "teacher-two")))),
             ))
         }
         override suspend fun signCourses(courses: List<Course>): SignSummary {
@@ -126,8 +129,10 @@ class AssistantControllerTest {
     }
 
     private fun TestScope.controller(repo: FakeRepository = FakeRepository(), store: MemoryStore = MemoryStore(),
-        current: LocalDate = start.plusDays(8)) = AssistantController(repo, store, object : AssistantPreferences {},
-            this, StandardTestDispatcher(testScheduler), { current })
+        current: LocalDate = start.plusDays(8),
+        clock: Clock = Clock.fixed(Instant.parse("2026-09-14T00:00:00Z"), ZoneOffset.UTC),
+    ) = AssistantController(repo, store, object : AssistantPreferences {},
+            this, StandardTestDispatcher(testScheduler), { current }, clock)
 
     private fun enter(controller: AssistantController) {
         controller.setUsername(" demo ")
@@ -591,7 +596,7 @@ class AssistantControllerTest {
             loadFailure = true
             directStart = iClassStart
         }
-        val controller = controller(repo)
+        val controller = controller(repo, clock = Clock.fixed(Instant.parse("2026-09-21T00:00:00Z"), ZoneOffset.UTC))
         advanceUntilIdle()
         enter(controller)
         controller.login()
@@ -729,7 +734,7 @@ class AssistantControllerTest {
     @Test fun singleCourseActionUsesOnlyTheSelectedCoursesCurrentScheduleIds() = runTest {
         val repo = FakeRepository().apply {
             courses = listOf(
-                Course("merged", "已核对课程", scheduleIds = listOf("teacher-one", "teacher-two")),
+                Course("merged", "已核对课程", classBeginTime = "08:00", classEndTime = "09:35", scheduleIds = listOf("teacher-one", "teacher-two")),
                 Course("uncertain", "待核对课程"),
                 Course("signed", "已签到课程", signed = true),
             )
@@ -963,7 +968,7 @@ class AssistantControllerTest {
     @Test fun emptyPerCourseMessagesUseSelectedLanguageFallbacks() = runTest {
         for (english in listOf(false, true)) {
             val repo = FakeRepository().apply {
-                courses = listOf(Course("one", "演示课程", scheduleIds = listOf("one", "two", "three")))
+                courses = listOf(Course("one", "演示课程", classBeginTime = "08:00", classEndTime = "09:35", scheduleIds = listOf("one", "two", "three")))
                 signItems = listOf(
                     SignItem("one", "成功课程", SignOutcome.SUCCESS),
                     SignItem("two", "跳过课程", SignOutcome.SKIPPED),
@@ -983,6 +988,41 @@ class AssistantControllerTest {
             assertTrue(logs.any { it.level == "info" && it.message.contains(if (english) "Already signed" else "该课程已签到") })
             assertTrue(logs.any { it.level == "warning" && it.message.contains(if (english) "Attendance failed" else "签到失败") })
         }
+    }
+
+    @Test fun signingChecksTheCurrentSessionWindowBeforeCallingTheRepository() = runTest {
+        val cases = listOf(
+            "2026-09-13T23:54:59.999Z" to false,
+            "2026-09-13T23:55:00Z" to true,
+            "2026-09-14T00:30:00Z" to true,
+            "2026-09-14T00:30:00.001Z" to false,
+            "2026-09-15T00:00:00Z" to false,
+        )
+        for ((time, allowed) in cases) {
+            val repo = FakeRepository()
+            val controller = controller(repo, clock = Clock.fixed(Instant.parse(time), ZoneOffset.UTC))
+            advanceUntilIdle()
+            enter(controller)
+            controller.login()
+            advanceUntilIdle()
+            controller.signCourse(controller.state.value.schedule!!.days.first().courses.first())
+            advanceUntilIdle()
+            assertEquals(time, if (allowed) 1 else 0, repo.signCalls)
+            if (!allowed) assertTrue(controller.state.value.message!!.contains("开课后 30 分钟"))
+            controller.close()
+        }
+    }
+
+    @Test fun missingStartTimeCannotSubmitAttendance() = runTest {
+        val repo = FakeRepository().apply { courses = courses.map { it.copy(classBeginTime = "") } }
+        val controller = controller(repo)
+        advanceUntilIdle()
+        enter(controller)
+        controller.login()
+        advanceUntilIdle()
+        controller.signCourse(controller.state.value.schedule!!.days.first().courses.first())
+        advanceUntilIdle()
+        assertEquals(0, repo.signCalls)
     }
 
     @Test fun unconfirmedSignResultIsNotAppliedAsSigned() = runTest {

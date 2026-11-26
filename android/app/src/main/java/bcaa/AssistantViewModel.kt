@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import java.time.Clock
 import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -83,6 +84,7 @@ internal class AssistantController(
     private val scope: CoroutineScope,
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val today: () -> LocalDate = { LocalDate.now() },
+    private val clock: Clock = Clock.systemUTC(),
 ) {
     private val defaultSemesterStart = AssistantUiState().semesterStart
     private val mutableState = MutableStateFlow(AssistantUiState(
@@ -319,20 +321,27 @@ internal class AssistantController(
 
     fun signCourse(value: Course) {
         if (state.value.user == null || state.value.busy) return
-        val course = state.value.schedule?.days?.flatMap { it.courses }?.flatMap {
-            if (it.attendanceSessions.isEmpty()) listOf(it) else it.attendanceSessions
-        }?.find {
+        val scheduled = state.value.schedule?.days?.flatMap { day ->
+            day.courses.flatMap { if (it.attendanceSessions.isEmpty()) listOf(it) else it.attendanceSessions }
+                .map { day.date to it }
+        }?.find { (_, it) ->
             it.id == value.id && it.classBeginTime == value.classBeginTime &&
                 it.courseNum == value.courseNum && it.courseName == value.courseName &&
                 it.classEndTime == value.classEndTime && it.classroomName == value.classroomName &&
                 it.teachBuildName == value.teachBuildName && it.storeyName == value.storeyName
         } ?: return
+        val (date, course) = scheduled
         if (!course.attendanceAvailable) {
             message(text("该课程暂无有效的签到关联，暂不能签到，请刷新课表。", "This class has no current attendance link. Refresh the timetable before signing."))
             return
         }
         if (course.signed) {
             message(text("该课程已签到。", "This class is already signed."))
+            return
+        }
+        val window = attendanceSignWindow(date, course)
+        if (window == null || clock.instant() !in window) {
+            message(text("仅可在课前 5 分钟至开课后 30 分钟签到。", "Sign in from 5 minutes before to 30 minutes after class starts."))
             return
         }
         sign(course)

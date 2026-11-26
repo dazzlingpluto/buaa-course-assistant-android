@@ -1,9 +1,11 @@
 package bcaa
 
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import org.junit.Assert.assertEquals
@@ -15,8 +17,12 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.ZoneId
+import java.time.ZoneOffset
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], qualifiers = "w390dp-h844dp-420dpi")
@@ -31,7 +37,7 @@ class AssistantScreenTest {
                 opened.add(uri)
             }
         }
-        compose.setContent {
+        setAttendanceContent {
             CompositionLocalProvider(LocalUriHandler provides uriHandler) {
                 AssistantContent(AssistantUiState(busy = false))
             }
@@ -48,7 +54,7 @@ class AssistantScreenTest {
             mode = NetworkMode.VPN, captcha = LoginCaptcha(CaptchaIntegrationTest.png())))
         var refreshes = 0
         var submits = 0
-        compose.setContent { AssistantContent(state.value, AssistantActions(
+        setAttendanceContent { AssistantContent(state.value, AssistantActions(
             captcha = { state.value = state.value.copy(captchaInput = it) }, refreshCaptcha = { refreshes++ }, login = { submits++ })) }
         compose.onNodeWithTag("captcha_input").performScrollTo().performTextInput("manual-test-input")
         compose.onNodeWithTag("login").performScrollTo().assertIsEnabled().performClick()
@@ -64,7 +70,7 @@ class AssistantScreenTest {
         val state = loggedIn()
         val schedule = state.schedule!!
         val courses = schedule.days.first().courses.map { it.copy(classCode = "private-class-code") }
-        compose.setContent { AssistantContent(state.copy(schedule = schedule.copy(days = listOf(schedule.days.first().copy(courses = courses))))) }
+        setAttendanceContent { AssistantContent(state.copy(schedule = schedule.copy(days = listOf(schedule.days.first().copy(courses = courses))))) }
         compose.onNodeWithTag("course_pending").performClick()
         compose.onNodeWithText("教学班号").assertDoesNotExist()
         compose.onNodeWithText("private-class-code").assertDoesNotExist()
@@ -81,7 +87,7 @@ class AssistantScreenTest {
         val sunday = schedule.days.first().date.plusDays(6)
         val course = schedule.days.first().courses.first().copy(id = "sunday-course")
         val days = (0L..6L).map { DaySchedule(schedule.days.first().date.plusDays(it), if (it == 6L) listOf(course) else emptyList()) }
-        compose.setContent { AssistantContent(state.copy(schedule = schedule.copy(days = days))) }
+        setAttendanceContent { AssistantContent(state.copy(schedule = schedule.copy(days = days))) }
         val grid = compose.onNodeWithTag("weekly_grid").fetchSemanticsNode().boundsInRoot
         val header = compose.onNodeWithTag("day_header_$sunday").fetchSemanticsNode().boundsInRoot
         assertTrue(header.right <= grid.right + 1f)
@@ -92,7 +98,7 @@ class AssistantScreenTest {
     @Test fun noAttendanceCourseShowsCheckAndNoSubmitButton() {
         val date = LocalDate.of(2026, 9, 7)
         val course = Course("no-attendance", "无需签到课程", "N1", "08:00", "09:35", attendanceAvailable = false, attendanceNotRequired = true)
-        compose.setContent { AssistantContent(AssistantUiState(busy = false, user = UserSession("u", "演示"),
+        setAttendanceContent { AssistantContent(AssistantUiState(busy = false, user = UserSession("u", "演示"),
             schedule = WeekSchedule(1, date, listOf(DaySchedule(date, listOf(course))), sections = listOf(AcademicPeriod(1, "08:00", "09:35"))))) }
         compose.onNodeWithTag("course_no-attendance").assertTextContains("✓", substring = true)
         compose.onNodeWithTag("course_no-attendance").performClick()
@@ -108,7 +114,7 @@ class AssistantScreenTest {
         val second = Course("slot-two", "数学", "M1", "10:40", "12:15")
         val parent = Course("parent", "数学", "M1", "08:50", "12:15", attendanceSessions = listOf(first, second))
         var submitted: Course? = null
-        compose.setContent { AssistantContent(AssistantUiState(busy = false, user = UserSession("demo", "演示"),
+        setAttendanceContent(Clock.fixed(Instant.parse("2026-09-07T02:40:00Z"), ZoneOffset.UTC)) { AssistantContent(AssistantUiState(busy = false, user = UserSession("demo", "演示"),
             schedule = WeekSchedule(1, date, listOf(DaySchedule(date, listOf(parent))))), AssistantActions(sign = { submitted = it })) }
         compose.onNodeWithTag("course_parent").performScrollTo().performClick()
         compose.onNodeWithText("已签 1/2").assertExists()
@@ -120,7 +126,7 @@ class AssistantScreenTest {
 
     @Test fun loginInputAndNetworkChoiceReachActions() {
         val state = mutableStateOf(AssistantUiState(busy = false))
-        compose.setContent {
+        setAttendanceContent {
             AssistantContent(
                 state.value,
                 AssistantActions(
@@ -146,7 +152,7 @@ class AssistantScreenTest {
     @Test fun rememberIsOptionalAndClearIsAnExplicitAction() {
         var remember = false
         var cleared = false
-        compose.setContent {
+        setAttendanceContent {
             AssistantContent(
                 AssistantUiState(busy = false, hasSavedCredentials = true),
                 AssistantActions(remember = { remember = it }, forget = { cleared = true }),
@@ -159,7 +165,7 @@ class AssistantScreenTest {
     }
 
     @Test fun busyStateDisablesAuthenticationMutations() {
-        compose.setContent { AssistantContent(AssistantUiState(busy = true, hasSavedCredentials = true)) }
+        setAttendanceContent { AssistantContent(AssistantUiState(busy = true, hasSavedCredentials = true)) }
         listOf("username", "password", "mode_direct", "mode_vpn", "remember_credentials", "auto_login", "forget_credentials", "login").forEach {
             compose.onNodeWithTag(it).assertIsNotEnabled()
         }
@@ -168,7 +174,7 @@ class AssistantScreenTest {
     @Test fun loginButtonCannotBePressedAgainAfterOperationStarts() {
         val state = mutableStateOf(AssistantUiState(username = "demo", password = "test", busy = false))
         var calls = 0
-        compose.setContent {
+        setAttendanceContent {
             AssistantContent(state.value, AssistantActions(login = { calls++; state.value = state.value.copy(busy = true) }))
         }
         compose.onNodeWithTag("login").performScrollTo().performClick()
@@ -177,7 +183,7 @@ class AssistantScreenTest {
     }
 
     @Test fun englishModeTranslatesFormLabelsAndActions() {
-        compose.setContent { AssistantContent(AssistantUiState(busy = false, language = AppLanguage.EN)) }
+        setAttendanceContent { AssistantContent(AssistantUiState(busy = false, language = AppLanguage.EN)) }
         compose.onNodeWithText("Student ID").assertExists()
         compose.onNodeWithText("Password", substring = false).assertExists()
         compose.onNodeWithTag("login").performScrollTo().assertTextContains("Sign In")
@@ -185,7 +191,7 @@ class AssistantScreenTest {
     }
 
     @Test fun loginHasInlineNetworkChoicesWithoutIdentityOrSemesterSelection() {
-        compose.setContent { AssistantContent(AssistantUiState(busy = false)) }
+        setAttendanceContent { AssistantContent(AssistantUiState(busy = false)) }
         compose.onNodeWithTag("mode_direct").assertIsSelected().assertTextContains("校园直连")
         compose.onNodeWithTag("mode_vpn").assertIsNotSelected().assertTextContains("校外网络")
         compose.onNodeWithTag("mode_menu").assertDoesNotExist()
@@ -198,7 +204,7 @@ class AssistantScreenTest {
     @Test fun autoLoginIsOptionalAndSendsItsOwnCallback() {
         val state = mutableStateOf(AssistantUiState(busy = false))
         var calls = 0
-        compose.setContent {
+        setAttendanceContent {
             AssistantContent(state.value, AssistantActions(autoLogin = {
                 calls++
                 state.value = state.value.copy(autoLogin = it, remember = it)
@@ -214,7 +220,7 @@ class AssistantScreenTest {
     @Test fun failedAutoLoginAppearsOnlyInTheBottomLogAndAllowsRetry() {
         var retries = 0
         val error = "登录失败，请重试"
-        compose.setContent {
+        setAttendanceContent {
             AssistantContent(AssistantUiState(username = "demo", password = "demo-password", remember = true,
                 autoLogin = true, busy = false, error = error, logs = listOf(AppLog(error, "error"))),
                 AssistantActions(login = { retries++ }))
@@ -230,7 +236,7 @@ class AssistantScreenTest {
 
     @Test fun emptyCredentialsCannotSubmit() {
         val state = mutableStateOf(AssistantUiState(busy = false))
-        compose.setContent { AssistantContent(state.value) }
+        setAttendanceContent { AssistantContent(state.value) }
         compose.onNodeWithTag("login").performScrollTo().assertIsNotEnabled()
         compose.runOnIdle { state.value = state.value.copy(username = "demo") }
         compose.onNodeWithTag("login").assertIsNotEnabled()
@@ -242,7 +248,7 @@ class AssistantScreenTest {
         val official = loggedIn()
         val state = mutableStateOf(official.copy(schedule = null, error = "教务读取失败"))
         var signed: Course? = null
-        compose.setContent {
+        setAttendanceContent {
             AssistantContent(state.value, AssistantActions(
                 attendanceMode = { mode ->
                     state.value = official.copy(
@@ -282,7 +288,7 @@ class AssistantScreenTest {
 
     @Test fun weekNavigationUsesLimitsAndSelectedWeek() {
         var selected = 0
-        compose.setContent { AssistantContent(loggedIn(), AssistantActions(week = { selected = it })) }
+        setAttendanceContent { AssistantContent(loggedIn(), AssistantActions(week = { selected = it })) }
         compose.onNodeWithTag("previous_week").assertIsNotEnabled()
         compose.onNodeWithTag("next_week").performClick()
         assertEquals(2, selected)
@@ -292,7 +298,7 @@ class AssistantScreenTest {
     }
 
     @Test fun finalWeekDisablesNextButton() {
-        compose.setContent { AssistantContent(loggedIn().copy(week = 18)) }
+        setAttendanceContent { AssistantContent(loggedIn().copy(week = 18)) }
         compose.onNodeWithTag("next_week").assertIsNotEnabled()
         compose.onNodeWithTag("previous_week").assertIsEnabled()
     }
@@ -303,7 +309,7 @@ class AssistantScreenTest {
         val start = LocalDate.of(2026, 9, 7)
         val weeks = listOf(1, 3, 20).map { number -> AcademicWeek(number, start.plusWeeks((number - 1).toLong()), start.plusWeeks((number - 1).toLong()).plusDays(6)) }
         val state = mutableStateOf(base.copy(week = 3, schedule = base.schedule!!.copy(weeks = weeks)))
-        compose.setContent { AssistantContent(state.value, AssistantActions(week = { selected = it })) }
+        setAttendanceContent { AssistantContent(state.value, AssistantActions(week = { selected = it })) }
         compose.onNodeWithTag("previous_week").performClick()
         assertEquals(1, selected)
         compose.onNodeWithTag("next_week").performClick()
@@ -320,7 +326,7 @@ class AssistantScreenTest {
     @Test fun realSectionsWithoutTimesAppearInGridButCannotBeSigned() {
         val state = loggedIn()
         val course = Course("real-section", "新增节次课程", beginSection = 15, endSection = 16)
-        compose.setContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(sections = emptyList(),
+        setAttendanceContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(sections = emptyList(),
             days = listOf(DaySchedule(LocalDate.of(2026, 9, 7), listOf(course)))))) }
         compose.onNodeWithTag("course_real-section").performScrollTo().performClick()
         compose.onNodeWithText("第 15–16 节").assertExists()
@@ -331,7 +337,7 @@ class AssistantScreenTest {
     @Test fun unscheduledCourseHasNoInventedDateAndCanOpenReadOnlyDetails() {
         val state = loggedIn()
         val course = Course("unscheduled", "待排课课程", beginSection = 2, endSection = 3, attendanceAvailable = false)
-        compose.setContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(unscheduled = listOf(course)))) }
+        setAttendanceContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(unscheduled = listOf(course)))) }
         compose.onNodeWithTag("unscheduled_heading").assertTextEquals("未安排时间")
         compose.onNodeWithTag("course_unscheduled").performClick()
         compose.onNodeWithText("未安排时间").assertExists()
@@ -341,7 +347,7 @@ class AssistantScreenTest {
 
     @Test fun unknownIdentityAndAttendanceFailureDoNotMislabelOrHideOfficialCourses() {
         val state = loggedIn().copy(studentType = StudentType.AUTO)
-        compose.setContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(attendanceMessage = "签到暂不可用"))) }
+        setAttendanceContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(attendanceMessage = "签到暂不可用"))) }
         compose.onNodeWithTag("timetable_identity").assertTextContains("身份未识别", substring = true)
         compose.onNodeWithTag("attendance_status").assertTextContains("签到暂不可用", substring = true)
         compose.onNodeWithTag("error_message").assertDoesNotExist()
@@ -350,7 +356,7 @@ class AssistantScreenTest {
 
     @Test fun tappingClassShowsDetailsAndOnlyThatClassCanBeSigned() {
         var selected: Course? = null
-        compose.setContent { AssistantContent(loggedIn(), AssistantActions(sign = { selected = it })) }
+        setAttendanceContent { AssistantContent(loggedIn(), AssistantActions(sign = { selected = it })) }
         compose.onNodeWithTag("weekly_grid").assertExists()
         compose.onNodeWithTag("sign_week").assertDoesNotExist()
         compose.onNodeWithTag("sign_pending").assertDoesNotExist()
@@ -368,7 +374,7 @@ class AssistantScreenTest {
 
     @Test fun completedCourseAndBusyStateDisableDetailSigning() {
         val state = mutableStateOf(loggedIn())
-        compose.setContent { AssistantContent(state.value) }
+        setAttendanceContent { AssistantContent(state.value) }
         compose.onNodeWithTag("course_pending").performClick()
         compose.runOnIdle { state.value = state.value.copy(busy = true) }
         compose.onNodeWithTag("sign_pending").performScrollTo().assertIsNotEnabled()
@@ -386,7 +392,7 @@ class AssistantScreenTest {
         var signs = 0
         val schedule = state.schedule.copy(days = listOf(DaySchedule(LocalDate.of(2026, 9, 7), listOf(course))),
             academic = state.schedule.academic!!.copy(uncertainCount = 1, verifiedScheduleIds = emptySet()))
-        compose.setContent { AssistantContent(state.copy(schedule = schedule), AssistantActions(sign = { signs++ })) }
+        setAttendanceContent { AssistantContent(state.copy(schedule = schedule), AssistantActions(sign = { signs++ })) }
         compose.onNodeWithTag("course_official-only").performClick()
         compose.onNodeWithText("2026-001").assertDoesNotExist()
         compose.onNodeWithText("official-only", substring = false).assertDoesNotExist()
@@ -400,7 +406,7 @@ class AssistantScreenTest {
 
     @Test fun undergraduateIdentityAndOfficialScheduleStatusAreVisible() {
         val state = loggedIn()
-        compose.setContent { AssistantContent(state.copy(studentType = StudentType.UNDERGRADUATE,
+        setAttendanceContent { AssistantContent(state.copy(studentType = StudentType.UNDERGRADUATE,
             schedule = state.schedule!!.copy(academic = state.schedule.academic!!.copy(uncertainCount = 1)))) }
         compose.onNodeWithTag("timetable_identity").assertTextContains("本科生", substring = true)
         compose.onNodeWithTag("academic_toggle").assertTextContains("正式课表", substring = true).performClick()
@@ -410,7 +416,7 @@ class AssistantScreenTest {
 
     @Test fun changingWeekOrRemovingCourseCannotKeepAnOldDetailAction() {
         val state = mutableStateOf(loggedIn())
-        compose.setContent { AssistantContent(state.value) }
+        setAttendanceContent { AssistantContent(state.value) }
         compose.onNodeWithTag("course_pending").performClick()
         compose.runOnIdle { state.value = state.value.copy(week = 2, schedule = null) }
         compose.onNodeWithTag("course_detail").assertDoesNotExist()
@@ -426,7 +432,7 @@ class AssistantScreenTest {
 
     @Test fun logoutRemovesDetailAndRestoresLoginPage() {
         val state = mutableStateOf(loggedIn())
-        compose.setContent { AssistantContent(state.value) }
+        setAttendanceContent { AssistantContent(state.value) }
         compose.onNodeWithTag("course_pending").performClick()
         compose.runOnIdle { state.value = AssistantUiState(busy = false) }
         compose.onNodeWithTag("course_detail").assertDoesNotExist()
@@ -443,7 +449,7 @@ class AssistantScreenTest {
             status = AcademicStatus.SELECT_TERM,
             terms = listOf(olderTerm, firstTerm, secondTerm),
         )
-        compose.setContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(academic = academic)), AssistantActions(academicTerm = { selected = it })) }
+        setAttendanceContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(academic = academic)), AssistantActions(academicTerm = { selected = it })) }
         compose.onNodeWithTag("academic_toggle").performClick()
         compose.onNodeWithTag("academic_term").performScrollTo().performClick()
         val displayedTerms = listOf(secondTerm, firstTerm, olderTerm).map { term ->
@@ -459,7 +465,7 @@ class AssistantScreenTest {
         val state = loggedIn()
         val schedule = state.schedule!!.copy(academic = AcademicComparison(status = AcademicStatus.UNAVAILABLE),
             days = state.schedule.days.map { day -> day.copy(courses = day.courses.map { it.copy(attendanceAvailable = false) }) })
-        compose.setContent { AssistantContent(state.copy(schedule = schedule)) }
+        setAttendanceContent { AssistantContent(state.copy(schedule = schedule)) }
         compose.onNodeWithTag("academic_toggle").assertTextContains("教务读取失败", substring = true)
         compose.onNodeWithTag("course_pending").performClick()
         compose.onNodeWithTag("academic_pending_pending").performScrollTo().assertExists()
@@ -470,7 +476,7 @@ class AssistantScreenTest {
     @Test fun academicFailureReasonIsAvailableOnDemand() {
         val state = loggedIn()
         val academic = AcademicComparison(status = AcademicStatus.UNAVAILABLE, message = "研究生系统要求校园网络，请检查网络模式后刷新。")
-        compose.setContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(academic = academic))) }
+        setAttendanceContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(academic = academic))) }
         compose.onNodeWithTag("academic_toggle").performClick()
         compose.onNodeWithTag("academic_reason").assertDoesNotExist()
         compose.onNodeWithTag("academic_reason_toggle").performScrollTo().performClick()
@@ -480,7 +486,7 @@ class AssistantScreenTest {
     @Test fun excludedEntriesCanBeInspectedWithoutRestoringThem() {
         val state = loggedIn()
         val academic = state.schedule!!.academic!!.copy(excluded = listOf(Course("removed", "残留课程", courseNum = "R100")))
-        compose.setContent { AssistantContent(state.copy(schedule = state.schedule.copy(academic = academic))) }
+        setAttendanceContent { AssistantContent(state.copy(schedule = state.schedule.copy(academic = academic))) }
         compose.onNodeWithTag("academic_toggle").performClick()
         compose.onNodeWithTag("academic_excluded").performScrollTo().performClick()
         compose.onNodeWithTag("academic_excluded_list").assertExists()
@@ -493,14 +499,14 @@ class AssistantScreenTest {
 
     @Test fun failedDayIsNotPresentedAsAnEmptyTimetable() {
         val date = LocalDate.of(2026, 9, 7)
-        compose.setContent { AssistantContent(loggedIn().copy(schedule = WeekSchedule(1, date, listOf(DaySchedule(date, emptyList(), failed = true))))) }
+        setAttendanceContent { AssistantContent(loggedIn().copy(schedule = WeekSchedule(1, date, listOf(DaySchedule(date, emptyList(), failed = true))))) }
         compose.onNodeWithTag("failed_day_$date").assertExists()
         compose.onNodeWithTag("empty_day_$date").assertDoesNotExist()
     }
 
     @Test fun emptyDayHasAnExplicitNoClassesMessageAndAllSevenDateHeaders() {
         val date = LocalDate.of(2026, 9, 7)
-        compose.setContent { AssistantContent(loggedIn().copy(schedule = WeekSchedule(1, date, listOf(DaySchedule(date, emptyList()))))) }
+        setAttendanceContent { AssistantContent(loggedIn().copy(schedule = WeekSchedule(1, date, listOf(DaySchedule(date, emptyList()))))) }
         compose.onNodeWithTag("empty_day_$date").assertExists()
         (0L..6L).forEach { compose.onNodeWithTag("day_header_${date.plusDays(it)}").assertExists() }
     }
@@ -509,7 +515,7 @@ class AssistantScreenTest {
         val state = loggedIn()
         val schedule = state.schedule!!
         val course = schedule.days.first().courses.first()
-        compose.setContent { AssistantContent(state.copy(schedule = schedule.copy(days = listOf(DaySchedule(schedule.days.first().date,
+        setAttendanceContent { AssistantContent(state.copy(schedule = schedule.copy(days = listOf(DaySchedule(schedule.days.first().date,
             listOf(course, course.copy(id = "overlap", courseName = "同时间另一课程"))))))) }
         compose.onNodeWithTag("cluster_2026-09-07_0").performClick()
         compose.onNodeWithTag("overlap_pending").assertExists()
@@ -521,7 +527,7 @@ class AssistantScreenTest {
     @Test fun nonStandardTimeRemainsAccessibleWithOriginalTime() {
         val state = loggedIn()
         val course = Course("special", "特殊时间课程", classBeginTime = "09:10", classEndTime = "10:20")
-        compose.setContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(days = listOf(DaySchedule(LocalDate.of(2026, 9, 7), listOf(course)))))) }
+        setAttendanceContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(days = listOf(DaySchedule(LocalDate.of(2026, 9, 7), listOf(course)))))) }
         compose.onNodeWithTag("course_special").performScrollTo().performClick()
         compose.onNodeWithText("09:10 — 10:20").assertExists()
         compose.onNodeWithText("非标准节次 / 时间待确认").assertExists()
@@ -533,7 +539,7 @@ class AssistantScreenTest {
         val state = loggedIn()
         val schedule = state.schedule!!
         val course = schedule.days.first().courses.first()
-        compose.setContent { AssistantContent(state.copy(schedule = schedule.copy(days = listOf(DaySchedule(schedule.days.first().date,
+        setAttendanceContent { AssistantContent(state.copy(schedule = schedule.copy(days = listOf(DaySchedule(schedule.days.first().date,
             listOf(course, course.copy(courseName = "同号不同名"))))))) }
         compose.onNodeWithTag("cluster_2026-09-07_0").performClick()
         compose.onNodeWithText("同号不同名").performClick()
@@ -545,14 +551,14 @@ class AssistantScreenTest {
     @Test fun overnightCourseDetailsRetainBothDates() {
         val state = loggedIn()
         val course = Course("overnight", "跨日课程", classBeginTime = "2026-09-07 08:00", classEndTime = "2026-09-08 09:35")
-        compose.setContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(days = listOf(DaySchedule(LocalDate.of(2026, 9, 7), listOf(course)))))) }
+        setAttendanceContent { AssistantContent(state.copy(schedule = state.schedule!!.copy(days = listOf(DaySchedule(LocalDate.of(2026, 9, 7), listOf(course)))))) }
         compose.onNodeWithTag("course_overnight").performScrollTo().performClick()
         compose.onNodeWithText("2026-09-07 08:00 — 2026-09-08 09:35").assertExists()
     }
 
     @Test fun logTrayShowsNewestEntryAndExpandsHistory() {
         val logs = listOf(AppLog("最新结果", time = LocalTime.of(10, 0)), AppLog("较早结果", time = LocalTime.of(9, 0)))
-        compose.setContent { AssistantContent(AssistantUiState(busy = false, logs = logs)) }
+        setAttendanceContent { AssistantContent(AssistantUiState(busy = false, logs = logs)) }
         compose.onNodeWithText("[10:00:00] 最新结果").assertExists()
         compose.onNodeWithTag("activity_log").assertDoesNotExist()
         compose.onNodeWithTag("log_toggle").performClick()
@@ -564,10 +570,71 @@ class AssistantScreenTest {
 
     @Test fun signedInHeaderAllowsSignOut() {
         var loggedOut = false
-        compose.setContent { AssistantContent(loggedIn(), AssistantActions(logout = { loggedOut = true })) }
+        setAttendanceContent { AssistantContent(loggedIn(), AssistantActions(logout = { loggedOut = true })) }
         compose.onNodeWithTag("username").assertDoesNotExist()
         compose.onNodeWithTag("logout").performClick()
         assertTrue(loggedOut)
+    }
+
+    @Test fun detailSigningShowsItsWindowAndUpdatesAtBothBoundaries() {
+        val clock = mutableStateOf(Clock.fixed(Instant.parse("2026-09-06T23:54:59Z"), ZoneOffset.UTC))
+        var signs = 0
+        setAttendanceContent {
+            CompositionLocalProvider(LocalAttendanceClock provides clock.value) {
+                AssistantContent(loggedIn(), AssistantActions(sign = { signs++ }))
+            }
+        }
+        compose.onNodeWithTag("course_pending").performClick()
+        compose.onNodeWithTag("attendance_sign_window_pending").performScrollTo()
+            .assertTextContains("课前 5 分钟至开课后 30 分钟", substring = true)
+        compose.onNodeWithTag("sign_pending").performScrollTo().assertIsNotEnabled()
+        compose.runOnIdle { clock.value = Clock.fixed(Instant.parse("2026-09-06T23:55:00Z"), ZoneOffset.UTC) }
+        compose.onNodeWithTag("sign_pending").assertIsEnabled()
+        compose.runOnIdle { clock.value = Clock.fixed(Instant.parse("2026-09-07T00:30:00Z"), ZoneOffset.UTC) }
+        compose.onNodeWithTag("sign_pending").assertIsEnabled().performClick()
+        assertEquals(1, signs)
+        compose.runOnIdle { clock.value = Clock.fixed(Instant.parse("2026-09-07T00:30:00.001Z"), ZoneOffset.UTC) }
+        compose.onNodeWithTag("sign_pending").assertIsNotEnabled().performClick()
+        assertEquals(1, signs)
+    }
+
+    @Test fun directListSigningRequiresTheSameWindowAsCourseDetails() {
+        var signs = 0
+        setAttendanceContent(Clock.fixed(Instant.parse("2026-09-07T00:31:00Z"), ZoneOffset.UTC)) {
+            AssistantContent(loggedIn().copy(attendanceMode = AttendanceMode.ICLASS), AssistantActions(sign = { signs++ }))
+        }
+        compose.onNodeWithTag("attendance_sign_window_pending", useUnmergedTree = true)
+            .assertTextContains("开课后 30 分钟", substring = true)
+        compose.onNodeWithTag("sign_pending").assertIsNotEnabled().performClick()
+        assertEquals(0, signs)
+    }
+
+    @Test fun staleEnabledButtonCannotSignAfterTheWindowCloses() {
+        var time = Instant.parse("2026-09-07T00:00:00Z")
+        val clock = object : Clock() {
+            override fun getZone(): ZoneId = ZoneOffset.UTC
+            override fun withZone(zone: ZoneId): Clock = Clock.fixed(time, zone)
+            override fun instant(): Instant = time
+        }
+        var signs = 0
+        setAttendanceContent(clock) { AssistantContent(loggedIn(), AssistantActions(sign = { signs++ })) }
+        compose.onNodeWithTag("course_pending").performClick()
+        val signAction = compose.onNodeWithTag("sign_pending").performScrollTo().assertIsEnabled()
+            .fetchSemanticsNode().config[SemanticsActions.OnClick].action!!
+        compose.runOnIdle {
+            time = Instant.parse("2026-09-07T00:30:00.001Z")
+            signAction()
+        }
+        assertEquals(0, signs)
+    }
+
+    private fun setAttendanceContent(
+        clock: Clock = Clock.fixed(Instant.parse("2026-09-07T00:00:00Z"), ZoneOffset.UTC),
+        content: @Composable () -> Unit,
+    ) {
+        compose.setContent {
+            CompositionLocalProvider(LocalAttendanceClock provides clock, content = content)
+        }
     }
 
     private fun loggedIn(): AssistantUiState {

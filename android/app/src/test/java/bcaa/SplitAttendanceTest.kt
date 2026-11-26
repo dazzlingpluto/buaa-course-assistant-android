@@ -1,6 +1,10 @@
 package bcaa
 
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZoneOffset
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.*
 import org.junit.Assert.*
@@ -40,6 +44,12 @@ class SplitAttendanceTest {
     }
     @Test fun controllerSubmitsOnlySelectedSessionAndPreservesOtherSessionOnRefresh() = runTest {
         var posted = emptyList<Course>()
+        var time = Instant.parse("2026-09-07T00:50:00Z")
+        val clock = object : Clock() {
+            override fun getZone(): ZoneId = ZoneOffset.UTC
+            override fun withZone(zone: ZoneId): Clock = Clock.fixed(time, zone)
+            override fun instant(): Instant = time
+        }
         val linked = merged(first, second)
         val repo = object : CourseRepository {
             override suspend fun login(username: String, password: String, mode: NetworkMode) = UserSession("user", "演示")
@@ -56,7 +66,7 @@ class SplitAttendanceTest {
             override fun save(credentials: SavedCredentials) {}
             override fun clear() {}
         }
-        val controller = AssistantController(repo, store, object : AssistantPreferences {}, this, StandardTestDispatcher(testScheduler))
+        val controller = AssistantController(repo, store, object : AssistantPreferences {}, this, StandardTestDispatcher(testScheduler), clock = clock)
         advanceUntilIdle()
         controller.setUsername("u"); controller.setPassword("p"); controller.login(); advanceUntilIdle()
         var parent = controller.state.value.schedule!!.days.first().courses.single()
@@ -67,6 +77,10 @@ class SplitAttendanceTest {
         parent = controller.state.value.schedule!!.days.first().courses.single()
         assertEquals("已签 1/2", parent.attendanceProgress)
         assertFalse(parent.attendanceSessions.last().signed)
+        controller.signCourse(parent.attendanceSessions.last())
+        advanceUntilIdle()
+        assertEquals(listOf("first"), posted.map { it.id })
+        time = Instant.parse("2026-09-07T02:40:00Z")
         controller.signCourse(parent.attendanceSessions.last()); advanceUntilIdle()
         assertEquals(listOf("second"), posted.map { it.id })
         assertTrue(controller.state.value.schedule!!.days.first().courses.single().signed)

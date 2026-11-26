@@ -21,7 +21,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -77,20 +76,13 @@ internal fun AttendanceQrButton(
     val scheduleIds = course.realIds
     if (scheduleIds.isEmpty()) return
     val window = remember(date, course.classBeginTime, course.classEndTime) { attendanceQrWindow(date, course) } ?: return
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val now by produceState(Instant.now(), lifecycle) {
-        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (true) {
-                value = Instant.now()
-                delay(qrRefreshMillis)
-            }
-        }
-    }
+    val clock = LocalAttendanceClock.current
+    val now by rememberAttendanceTime(qrRefreshMillis)
     val available = now in window
     var open by remember(date, scheduleIds, available) { mutableStateOf(false) }
 
     OutlinedButton(
-        onClick = { open = Instant.now() in window },
+        onClick = { open = clock.instant() in window },
         enabled = enabled && available,
         modifier = Modifier.fillMaxWidth().testTag("attendance_qr_${course.id}"),
         shape = RoundedCornerShape(12.dp),
