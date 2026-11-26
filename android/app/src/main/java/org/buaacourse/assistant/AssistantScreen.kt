@@ -125,6 +125,7 @@ fun AssistantTheme(content: @Composable () -> Unit) {
             onBackground = Ink,
             surface = Color.White,
             onSurface = Ink,
+            surfaceContainerHigh = Tint,
             surfaceVariant = Color(0xFFEFF6FA),
             onSurfaceVariant = SoftInk,
             outline = Line,
