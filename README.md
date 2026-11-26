@@ -1,6 +1,6 @@
 # BUAA Course Assistant · 北航课程助手 · BCAA
 
-面向 Android 手机的北航课程助手，支持查看本科生和研究生的教务周课表，以及通过课表或 iClass 列表手动签到。
+面向 Android 手机的北航课程助手，支持查看本科生和研究生的教务周课表，以及通过课表或 iClass 列表手动签到。课程详情支持查看签到二维码并保存到相册。
 
 ## 安装与更新
 
@@ -27,13 +27,13 @@
 
 以下截图使用演示数据。
 
-| 课表签到 | iClass 签到 |
-| --- | --- |
-| ![周课表，右上角有切换按钮](docs/native-courses.png) | ![切换后的 iClass 签到列表](docs/native-iclass.png) |
+| 课程详情 | 签到二维码 |
+| :---: | :---: |
+| <img src="docs/native-course-detail.png" width="296" alt="课程详情中的签到二维码入口"> | <img src="docs/native-attendance-qr.png" width="296" alt="签到二维码弹窗和保存到相册按钮"> |
 
-| 登录页 | 课程详情 |
-| --- | --- |
-| ![登录页](docs/native-login.png) | ![课程详情](docs/native-course-detail.png) |
+| 课表签到 | iClass 签到 | 登录页 |
+| :---: | :---: | :---: |
+| <img src="docs/native-courses.png" width="216" alt="周课表，右上角有切换按钮"> | <img src="docs/native-iclass.png" width="216" alt="切换后的 iClass 签到列表"> | <img src="docs/native-login.png" width="216" alt="登录页"> |
 
 ## 免责声明
 
