@@ -43,4 +43,4 @@
 
 ## 许可证
 
-本项目中维护者有权许可的代码采用 GNU General Public License v3.0 only（GPL-3.0-only）授权，完整条款见 [LICENSE](LICENSE)。第三方代码、依赖及素材适用各自的许可条款。上述使用说明独立于 GPL 授权条款。
+本项目采用[GPL-3.0](LICENSE)。
