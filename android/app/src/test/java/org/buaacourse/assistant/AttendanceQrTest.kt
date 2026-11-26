@@ -6,6 +6,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.security.MessageDigest
 import java.time.Instant
 import java.time.LocalDate
 
@@ -22,6 +23,23 @@ class AttendanceQrTest {
         assertEquals(setOf("courseSchedId", "timestamp"), url.queryParameterNames)
         assertEquals(id, url.queryParameter("courseSchedId"))
         assertEquals(timestamp.toEpochMilli().toString(), url.queryParameter("timestamp"))
+    }
+
+    @Test fun encoderPreservesAttendanceMatrixForFixedPayload() {
+        val qr = encodeAttendanceQr("class +01&A/2", Instant.parse("2026-11-26T00:05:00.123Z"))
+        assertEquals(41, qr.size)
+
+        // Hash the modules in row order using the original Nayuki encoder as the reference.
+        val digest = MessageDigest.getInstance("SHA-256")
+        for (y in 0 until qr.size) {
+            for (x in 0 until qr.size) {
+                digest.update(if (qr.getModule(x, y)) 1.toByte() else 0.toByte())
+            }
+        }
+        assertEquals(
+            "cced2b4302b41afe3a735d221e2aac48d5eaa86cb0316665f5b263aa3b162caf",
+            digest.digest().joinToString("") { "%02x".format(it) },
+        )
     }
 
     @Test fun qrWindowUsesTheSpecificSessionDateAndBeijingTime() {
