@@ -1,5 +1,6 @@
 package org.buaacourse.assistant
 
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 
@@ -108,6 +109,7 @@ interface CourseRepository {
     suspend fun loadDirectAttendance(week: Int, semesterStart: LocalDate): WeekSchedule =
         throw IclassException("iClass 签到暂不可用")
     suspend fun linkAttendance(schedule: WeekSchedule): WeekSchedule = schedule
+    suspend fun loadAttendanceTimestamp(): Instant = throw IclassException("iClass 服务器时间暂不可用")
     suspend fun signCourses(courses: List<Course>): SignSummary
     fun selectAcademicTerm(code: String) {}
     fun selectStudentType(type: StudentType) {}

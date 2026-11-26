@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import java.net.URLDecoder
+import java.time.Instant
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
@@ -17,6 +18,8 @@ object IclassProtocol {
     private val vpnCasHost = encryptHost("sso.buaa.edu.cn")
     private val loginNamePattern = Regex("loginName=([^&#\\\"'<>\\s]+)", RegexOption.IGNORE_CASE)
     private const val signUrl = "https://iclass.buaa.edu.cn:8181/app/course/stu_auto_sign.action"
+    private val scanSignUrl = "http://iclass.buaa.edu.cn:8081/eschool/app/course/stu_scan_sign.action".toHttpUrl()
+    private const val attendanceTimestampPath = "app/common/get_timestamp.action"
     internal const val unconfirmedSignMessage = "签到结果未确认，请刷新后核对签到状态"
 
     private const val loginFormSelector = "form#loginForm, form#fm1, form:has(input[name=execution]), form:has(input[name=password])"
@@ -191,6 +194,23 @@ object IclassProtocol {
         .add("latitude", "0")
         .add("machineInfo", "Android")
         .build()
+
+    // This URL is encoded into the QR image for the scanner; BCAA never requests it.
+    internal fun attendanceQrUrl(scheduleId: String, timestampMillis: Long): String = scanSignUrl.newBuilder()
+        .addQueryParameter("courseSchedId", scheduleId)
+        .addQueryParameter("timestamp", timestampMillis.toString())
+        .build().toString()
+
+    internal fun attendanceTimestampUrl(mode: NetworkMode): HttpUrl = when (mode) {
+        NetworkMode.DIRECT -> "http://iclass.buaa.edu.cn:8081/$attendanceTimestampPath".toHttpUrl()
+        NetworkMode.VPN -> toWebVpnUrl("https://iclass.buaa.edu.cn:8347/$attendanceTimestampPath")
+    }
+
+    internal fun parseAttendanceTimestamp(data: JSONObject): Instant {
+        val milliseconds = value(data, "timestamp").trim().toLongOrNull()?.takeIf { it > 0 }
+            ?: throw IclassException("iClass 服务器时间格式无效")
+        return Instant.ofEpochMilli(milliseconds)
+    }
 
     fun classifySignResponse(data: JSONObject): SignClassification {
         val responseStatus = status(data).let { if (it == "success") 0L else it.toLongOrNull() }

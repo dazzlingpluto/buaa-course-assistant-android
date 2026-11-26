@@ -99,6 +99,7 @@ class AssistantScreenTest {
         compose.onNodeWithText("✓ 无需签到").assertExists()
         compose.onNodeWithTag("attendance_not_required_no-attendance").performScrollTo().assertExists()
         compose.onNodeWithTag("sign_no-attendance").assertDoesNotExist()
+        compose.onNodeWithTag("attendance_qr_no-attendance").assertDoesNotExist()
     }
 
     @Test fun splitAttendanceButtonsSubmitOnlyTheirOwnSession() {

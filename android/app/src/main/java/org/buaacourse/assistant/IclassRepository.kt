@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Authenticator
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Cookie
@@ -28,6 +29,7 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.time.Clock
 import java.time.DayOfWeek
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -49,6 +51,11 @@ class IclassRepository(
 ) : CourseRepository {
     private val lock = Any()
     private var active: NetworkSession? = null
+    private val campusTimestampClient by lazy {
+        // The legacy campus clock endpoint is HTTP. Its dedicated client has no credential state.
+        baseClient.newBuilder().cookieJar(CookieJar.NO_COOKIES).authenticator(Authenticator.NONE)
+            .cache(null).followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
+    }
     private class NetworkSession(val endpoints: IclassProtocol.Endpoints, val mode: NetworkMode, val username: String, baseClient: OkHttpClient) {
         val cookies = SessionCookies()
         val cancelled = AtomicBoolean(false)
@@ -473,6 +480,21 @@ class IclassRepository(
             throw IclassException("$label：${safeError(error).message}")
         }
 
+    override suspend fun loadAttendanceTimestamp(): Instant {
+        val (session, _) = authenticated()
+        val url = IclassProtocol.attendanceTimestampUrl(session.mode)
+        val request = request(url).newBuilder().header("Cache-Control", "no-cache, no-store").build()
+        val client = if (session.mode == NetworkMode.DIRECT) campusTimestampClient else {
+            requireTrusted(url)
+            session.client
+        }
+        val call = client.newCall(request)
+        call.timeout().timeout(5, TimeUnit.SECONDS)
+        val page = awaitResponse(session, call)
+        requireSuccess(page.code)
+        return IclassProtocol.parseAttendanceTimestamp(json(page.body))
+    }
+
     override suspend fun signCourses(courses: List<Course>): SignSummary {
         val (session, _) = authenticated()
         if (session.sessionId.isBlank() || session.iclassUserId.isBlank()) activateIclass(session)
@@ -625,10 +647,13 @@ class IclassRepository(
     }
 
     private suspend fun execute(session: NetworkSession, request: Request): Page {
-        ensureSession(session)
         requireTrusted(request.url)
+        return awaitResponse(session, session.client.newCall(request))
+    }
+
+    private suspend fun awaitResponse(session: NetworkSession, call: Call): Page {
+        ensureSession(session)
         return suspendCancellableCoroutine { continuation ->
-            val call = session.client.newCall(request)
             session.calls.add(call)
             continuation.invokeOnCancellation { call.cancel() }
             if (session.cancelled.get()) call.cancel()

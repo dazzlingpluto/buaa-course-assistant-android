@@ -50,6 +50,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun currentWeek() = controller.currentWeek()
     fun refresh() = controller.refresh()
     fun signCourse(value: Course) = controller.signCourse(value)
+    suspend fun loadAttendanceTimestamp() = controller.loadAttendanceTimestamp()
     fun dismissMessage() = controller.dismissMessage()
     fun dismissError() = controller.dismissError()
     override fun onCleared() {
@@ -313,6 +314,8 @@ internal class AssistantController(
             loadWeekInternal(0)
         }
     }
+
+    suspend fun loadAttendanceTimestamp() = repository.loadAttendanceTimestamp()
 
     fun signCourse(value: Course) {
         if (state.value.user == null || state.value.busy) return

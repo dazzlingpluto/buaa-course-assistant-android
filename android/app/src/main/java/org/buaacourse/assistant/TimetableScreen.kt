@@ -463,12 +463,17 @@ private fun CourseDetail(date: LocalDate?, course: Course, state: AssistantUiSta
                                         modifier = Modifier.fillMaxWidth().testTag("sign_${session.id}"), shape = RoundedCornerShape(12.dp)) {
                                         Text(if (session.signed) words.text("✓ 已签到", "✓ Signed") else words.text("签到", "Sign"))
                                     }
+                                    if (canAttend) AttendanceQrButton(session, date, !state.busy, words, actions.loadAttendanceTimestamp)
                                 }
                             }
-                        } else Button(onClick = { actions.sign(course.attendanceSessions.singleOrNull() ?: course) }, enabled = !state.busy && !course.signed && canAttend,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("sign_${course.id}"), shape = RoundedCornerShape(12.dp)) {
-                            if (state.busy) { CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
-                            Text(if (!canAttend) words.text("暂不可签到", "Attendance unavailable") else if (course.signed) words.text("✓ 已完成签到", "✓ Signed") else if (state.busy) words.text("处理中…", "Working…") else words.text("签到", "Sign"), fontWeight = FontWeight.SemiBold)
+                        } else {
+                            val session = course.attendanceSessions.singleOrNull() ?: course
+                            Button(onClick = { actions.sign(session) }, enabled = !state.busy && !course.signed && canAttend,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("sign_${course.id}"), shape = RoundedCornerShape(12.dp)) {
+                                if (state.busy) { CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
+                                Text(if (!canAttend) words.text("暂不可签到", "Attendance unavailable") else if (course.signed) words.text("✓ 已完成签到", "✓ Signed") else if (state.busy) words.text("处理中…", "Working…") else words.text("签到", "Sign"), fontWeight = FontWeight.SemiBold)
+                            }
+                            if (canAttend) AttendanceQrButton(session, date, !state.busy, words, actions.loadAttendanceTimestamp)
                         }
                     }
                 }

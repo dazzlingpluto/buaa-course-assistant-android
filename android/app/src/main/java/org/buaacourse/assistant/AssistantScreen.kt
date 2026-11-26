@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
+import java.time.Instant
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -78,6 +79,7 @@ data class AssistantActions(
     val sign: (Course) -> Unit = {},
     val dismissMessage: () -> Unit = {},
     val dismissError: () -> Unit = {},
+    val loadAttendanceTimestamp: suspend () -> Instant = { throw IclassException("iClass 服务器时间暂不可用") },
 )
 
 @Composable
@@ -105,6 +107,7 @@ internal fun AssistantScreen(viewModel: AssistantViewModel) {
             sign = viewModel::signCourse,
             dismissMessage = viewModel::dismissMessage,
             dismissError = viewModel::dismissError,
+            loadAttendanceTimestamp = viewModel::loadAttendanceTimestamp,
         ),
     )
 }

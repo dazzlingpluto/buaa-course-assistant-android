@@ -75,6 +75,32 @@ class IclassRepositoryTest {
         fixture.repo.logout()
     }
 
+    @Test fun campusQrClockReadsFreshServerValuesWithoutBusinessLoginOrRedirects() = runBlocking {
+        val clockUrl = "http://iclass.buaa.edu.cn:8081/app/common/get_timestamp.action".toHttpUrl()
+        val values = ArrayDeque(listOf("""{"timestamp":1700000000123}""", """{"timestamp":"1700000004567"}""",
+            """{"timestamp":1700000000.5}"""))
+        val fixture = Fixture { request ->
+            if (request.url != clockUrl) null
+            else if (values.isEmpty()) reply(request, "", 302, "https://sso.buaa.edu.cn/other")
+            else reply(request, values.removeFirst())
+        }
+        try {
+            assertTrue(runCatching { fixture.repo.loadAttendanceTimestamp() }.exceptionOrNull() is IclassException)
+            assertTrue(fixture.requests.isEmpty())
+            fixture.repo.login("student", "fixture-password", NetworkMode.DIRECT)
+            assertEquals(Instant.ofEpochMilli(1700000000123), fixture.repo.loadAttendanceTimestamp())
+            assertEquals(Instant.ofEpochMilli(1700000004567), fixture.repo.loadAttendanceTimestamp())
+            assertTrue(runCatching { fixture.repo.loadAttendanceTimestamp() }.exceptionOrNull() is IclassException)
+            assertTrue(runCatching { fixture.repo.loadAttendanceTimestamp() }.exceptionOrNull() is IclassException)
+            val clockRequests = fixture.requests.takeLast(4)
+            assertTrue(clockRequests.all { it.url == clockUrl && it.method == "GET" && it.body == null })
+            assertTrue(clockRequests.all { it.header("sessionId") == null && it.header("Cookie") == null })
+            assertTrue(clockRequests.all { it.header("Cache-Control") == "no-cache, no-store" })
+            assertFalse(IclassProtocol.isTrustedUrl(clockUrl))
+            assertFalse(fixture.requests.any { it.url.encodedPath.endsWith("/user/login.action") || isSignRequest(it) })
+        } finally { fixture.repo.logout() }
+    }
+
     @Test fun directCasPortalHandoffDoesNotVisitPortalOrDeclareSuccessBeforeCourseLogin() = runBlocking {
         val targets = listOf(
             "https://app.buaa.edu.cn/portal?ticket=portal-ticket-secret",
@@ -273,6 +299,7 @@ class IclassRepositoryTest {
 
     @Test fun vpnLoginAndSigningKeepAllTrafficInsideSchoolWebVpn() = runBlocking {
         val endpoints = IclassProtocol.endpoints(NetworkMode.VPN)
+        val clockUrl = IclassProtocol.toWebVpnUrl("https://iclass.buaa.edu.cn:8347/app/common/get_timestamp.action")
         val fixture = Fixture { request ->
             when {
                 request.url.encodedPath == endpoints.login.encodedPath && request.method == "GET" ->
@@ -282,6 +309,7 @@ class IclassRepositoryTest {
                 request.url.toString() == "https://d.buaa.edu.cn/" -> reply(request, "<p>VPN ready</p>")
                 request.url.encodedPath.endsWith("/api/login") -> reply(request, "UC activated")
                 request.url.encodedPath.endsWith("/api/uc/status") -> reply(request, """{"code":0,"data":{"schoolid":"123","name":"演示用户"}}""")
+                request.url == clockUrl -> reply(request, """{"timestamp":1700000000123}""")
                 request.url == endpoints.myCenter -> reply(request, "", 302,
                     endpoints.myCenter.newBuilder().query(null).addQueryParameter("loginName", "vpn+name=").build().toString())
                 request.url.encodedPath.endsWith("get_stu_course_sched.action") ->
@@ -290,6 +318,11 @@ class IclassRepositoryTest {
             }
         }
         fixture.repo.login("vpn-user", "vpn-password", NetworkMode.VPN)
+        assertEquals(Instant.ofEpochMilli(1700000000123), fixture.repo.loadAttendanceTimestamp())
+        val clockRequest = fixture.requests.last()
+        assertEquals(clockUrl, clockRequest.url)
+        assertEquals("GET", clockRequest.method)
+        assertNull(clockRequest.header("sessionId"))
         val summary = fixture.repo.signCourses(listOf(Course("vpn-class", "课程")))
         assertEquals(1, summary.success)
         assertTrue(fixture.requests.all { it.url.host == "d.buaa.edu.cn" && it.url.scheme == "https" })
