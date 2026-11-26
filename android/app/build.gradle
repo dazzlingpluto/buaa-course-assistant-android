@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace 'org.buaacourse.assistant'
+    namespace 'bcaa'
     compileSdk 36
     defaultConfig {
         applicationId 'org.buaacourse.assistant'
